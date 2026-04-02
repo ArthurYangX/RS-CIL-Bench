@@ -59,3 +59,5 @@ Focus on:
 - ablation completeness
 - fair comparison
 - robustness (multi-seed if needed)
+
+距离输入一个需求，自动迭代验证，最终吐出一个芯片

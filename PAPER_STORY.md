@@ -201,8 +201,55 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 
 ---
 
+---
+
+## Experiment Logging Protocol (已确定)
+
+### 目录结构
+```
+runs/
+  {method_name}/
+    {seed}/
+      config.yaml                    # 完整配置 + git commit + 环境信息
+      metrics_summary.json           # 最终汇总指标
+      task_metrics.csv               # 每 task × 每 domain 的 OA/AA/Kappa/per-class
+      predictions_task{t}_test.parquet  # 每样本: x,y,gt,pred,confidence,task_id,domain_id
+      logits_task{t}_test.npz        # 完整 logits
+      features_task{t}_test.npz      # 分类前一层特征（用于 t-SNE/漂移分析）
+      confusion_task{t}.csv          # 混淆矩阵
+      train_log.csv                  # 每 epoch: loss, val_acc, lr
+      ckpt_task{t}.pt                # 每 task 后 checkpoint
+```
+
+### 必须记录
+- 完整配置（方法名/seed/数据集/task划分/class order/patch size/epoch/lr/memory budget）
+- 代码版本（git commit/分支/运行时间/CUDA/PyTorch 版本）
+- 每 task 核心指标：OA/AA/Kappa、准确率矩阵、forgetting、BWT
+- 每样本预测：x, y, gt_label, pred_label, confidence, task_id, domain_id, split
+- 每 task checkpoint
+
+### 强烈建议
+- 完整 logits（用于 calibration / bias 分析）
+- Feature embedding（用于 t-SNE / 漂移分析 / 类间距离）
+- Confusion matrix（每 task + 最终）
+- Per-class precision/recall/F1
+- 训练曲线（每 epoch）
+- Replay 方法的 exemplar index/class counts
+
+### Cross-domain 特有
+- task_metrics.csv 包含 task_id × eval_domain 矩阵
+- 每个 task 后对所有已见域测试（不只是当前域）
+- 保留每个 task 后的 test prediction（用于 classification map 演化图）
+
+### Drift observation 额外
+- 4 个第三方 backbone 每 task 后各分支 feature embedding 原始矩阵
+- 用于计算 CKA / cosine drift
+
+---
+
 ## TODO
 - [ ] Patch size sweep（Ours + Naive 验证集）
+- [ ] 实现实验 logging 框架
 - [ ] 实现 4 个第三方 backbone 的 drift observation 实验
 - [ ] 按原文实现 12 个 baseline 的 HSI+LiDAR 适配
 - [ ] 全部 3-seed MTH 跑完

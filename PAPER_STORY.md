@@ -139,6 +139,40 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 ### 替补
 - **FCS** (CVPR'24)：若 PASS++ 迁移不稳定则替换
 
+### 超参协议（三层分离）
+
+**任务层（统一固定）**
+| 参数 | 设定 |
+|:---|:---|
+| Patch size | 先用 Ours + Naive 在验证集 sweep {7,9,11,13,15}，确认趋势一致后锁死；若时间不够直接用 11×11 |
+| Normalization | HSI 按 band 标准化，LiDAR 单独标准化 |
+| Augmentation | 统一 flip + 90° rotation |
+| Class order / split | 所有方法完全一致（MTH，固定 task 划分） |
+| Seed | 统一 3 seed |
+
+**方法层（按各自原文）**
+| 参数 | 做法 |
+|:---|:---|
+| Optimizer / scheduler | 按原文 |
+| Epoch 数 | 按原文 |
+| Learning rate | 按原文 |
+| 损失权重 (λ_kd, λ_ewc 等) | 按原文 |
+| 分类器类型 | 按原文 |
+
+**各方法参考训练设定**
+| 方法 | 设定 |
+|:---|:---|
+| EWC / LwF / iCaRL / LUCIR | SGD + momentum 0.9, batch=128, lr=0.1, 160 epochs, step decay |
+| PODNet | 跟官方实现；无完整 config 则跟 LUCIR 同 recipe |
+| FOSTER | SGD, batch=128, lr=0.1, 170 epochs, cosine annealing |
+| ACIL | 按原文 analytic 更新 |
+| PASS++ | 按原文 |
+| Ours | 正常调参，通过验证集选定后固定 |
+
+**最小适配层**
+- 只改输入接口（HSI 波段数 + LiDAR 通道），不改训练范式
+- 如 ResNet-family 整体不收敛，对该类方法统一降 lr（如 0.1→0.01），不对单个 baseline 单独优化
+
 ---
 
 ## TODO

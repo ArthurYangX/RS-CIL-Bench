@@ -175,8 +175,35 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 
 ---
 
+---
+
+## Ablation Study (已确定)
+
+### 主表（6 个配置）
+
+| # | 配置 | 改动 | 验证的 claim |
+|:--|:---|:---|:---|
+| 1 | Full method | — | 完整方法 |
+| 2 | w/o SHINE | 去掉域对齐 | 域对齐的贡献 |
+| 3 | w/o DCR | 去掉 prototype 校正，保留 prototype classifier | Prototype 校正的贡献 |
+| 4 | Symmetric LoRA | HSI rank = LiDAR rank = 总预算/2（如各 rank=6） | 不对称适配的必要性 |
+| 5 | Shared spatial adapter | HSI 空间和 LiDAR 空间共享同一个 LoRA | 解耦设计的必要性 |
+| 6 | Spectral LoRA | 只在光谱分支加 LoRA，空间分支冻结 | 反向验证：应适配空间而非光谱 |
+
+阅读顺序：域对齐 → 校正 → 适配策略 → 结构设计 → 核心假设验证
+
+### Supplementary（2 个配置）
+
+| 配置 | 改动 | 验证 |
+|:---|:---|:---|
+| w/o LoRA | 冻结空间分支，不加任何 LoRA | LoRA 适配本身的贡献 |
+| FC head | 用 FC 分类器替换 prototype | Prototype vs FC |
+
+---
+
 ## TODO
+- [ ] Patch size sweep（Ours + Naive 验证集）
 - [ ] 实现 4 个第三方 backbone 的 drift observation 实验
 - [ ] 按原文实现 12 个 baseline 的 HSI+LiDAR 适配
 - [ ] 全部 3-seed MTH 跑完
-- [ ] Ablation 实验设计
+- [ ] Ablation 6 配置 + 2 supplementary

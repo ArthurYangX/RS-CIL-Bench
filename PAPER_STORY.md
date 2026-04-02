@@ -45,7 +45,8 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 | iCaRL (pilot, 5/cls) | 5/cls | 86.2±2.2 |
 | LUCIR (pilot, 5/cls) | 5/cls | 85.4±3.8 |
 
-- 在无回放条件下与回放方法有竞争力（competitive），且方差更小（稳定性更优）
+- 在无回放条件下与回放方法有竞争力（competitive），且 3-seed std 更小（稳定性更优）
+- "稳定性"证据：主表报 mean±std，补充表报 3-seed Forgetting std
 - 正式主表将使用 20/cls replay budget，预计 replay 方法数值会更高
 
 ---
@@ -53,7 +54,7 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 ## Contribution Summary
 1. 揭示了 HSI+LiDAR 跨域增量场景下"漂移不对称"现象（空间 >> 光谱），并据此设计了解耦-锚定-不对称适配框架
 2. 提出 SHINE（per-domain whitening）解决跨域 prototype 偏移
-3. 在无回放条件下与回放方法有竞争力（competitive），且稳定性更优
+3. 在无回放条件下与回放方法有竞争力（competitive），且 3-seed Avg TAg std 更小（稳定性证据：主表 mean±std + 补充表 Forgetting std）
 
 ---
 
@@ -124,7 +125,7 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 | 8 | LUCIR | 回放 | CVPR 2019 | 20/cls | 经典 replay, cosine classifier |
 | 9 | PODNet | 回放 | ECCV 2020 | 20/cls | 强蒸馏 + replay, 注明 CNN/NME |
 | 10 | FOSTER | 回放 | ECCV 2022 | 20/cls | 强 replay, 原文默认 head |
-| 11 | Joint training | 上界 | — | all | S2CM backbone，所有 9 task 数据合并一次性训练，同 Ours 的 lr/epoch |
+| 11 | Joint training | 上界 | — | all | S2CM backbone，所有 9 task 数据合并一次性训练，同 Ours 的 lr/epoch，使用 FC head，关闭 LoRA/SHINE/DCR（纯上界，无 CIL 组件） |
 | — | **Ours (CMCD-LoRA+SHINE)** | 无回放 | — | **0** | 主方法 |
 
 ### Replay 协议

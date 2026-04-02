@@ -35,26 +35,25 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 - Prototype-based 分类替代全连接，效果显著更好
 
 ### 3. Results (结果)
-**设定**: MTH 顺序（MUUFL → Trento → Houston），3 datasets × 3 tasks = 9 tasks 串行
+**设定**: MTH 顺序（MUUFL → Trento → Houston），3 datasets × 3 tasks/dataset = 9 tasks 串行
+
+> 以下为旧 pilot 数据（5/cls），正式主表待 20/cls 全部重跑后更新。
 
 | 方法 | Exemplar | Avg TAg |
 |:---|:---:|:---:|
-| Frozen | 0 | 59.2 |
-| EWC | 0 | 54.3 |
-| LwF | 0 | 61.2 |
-| iCaRL | 5/cls | **86.2±2.2** |
-| LUCIR | 5/cls | 85.4±3.8 |
 | **Ours** | **0** | **83.7±0.9** |
+| iCaRL (pilot, 5/cls) | 5/cls | 86.2±2.2 |
+| LUCIR (pilot, 5/cls) | 5/cls | 85.4±3.8 |
 
-- 无回放达到有回放方法的同等水平
-- 方差比 iCaRL 和 LUCIR 都小（稳定性更好）
+- 在无回放条件下与回放方法有竞争力（competitive），且方差更小（稳定性更优）
+- 正式主表将使用 20/cls replay budget，预计 replay 方法数值会更高
 
 ---
 
 ## Contribution Summary
 1. 揭示了 HSI+LiDAR 跨域增量场景下"漂移不对称"现象（空间 >> 光谱），并据此设计了解耦-锚定-不对称适配框架
 2. 提出 SHINE（per-domain whitening）解决跨域 prototype 偏移
-3. 在无回放条件下达到与有回放方法（iCaRL/LUCIR）相当的精度，且稳定性更优
+3. 在无回放条件下与回放方法有竞争力（competitive），且稳定性更优
 
 ---
 
@@ -71,10 +70,14 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 ### 目的
 证明"跨域场景下空间表征漂移 ≈ 2× 光谱表征漂移"是架构无关的普遍现象。
 
+> 注意：此实验使用 3 tasks（dataset-as-task）而非主实验的 9 tasks。
+> 目的是隔离纯粹的域漂移，排除类增量漂移的干扰。
+> Supplementary 可补 9-task 版本以验证一致性。
+
 ### 设置
 | 项目 | 方案 |
 |:---|:---|
-| Task 划分 | 3 tasks, dataset-as-task, MTH (MUUFL→Trento→Houston) |
+| Task 划分 | 3 tasks, dataset-as-task, MTH (MUUFL→Trento→Houston)（简化诊断实验，非主设定） |
 | CIL 策略 | Naive fine-tuning（无 replay、无 KD） |
 | Backbone | Coupled CNNs (TGRS'20), HCT (TGRS'23), MAHiDFNet (InfoFusion'22), GAMF (ESWA'24) |
 | 度量 | Linear CKA（主）+ Cosine Similarity（辅） |
@@ -99,8 +102,6 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 
 ---
 
----
-
 ## Baseline Comparison (已确定)
 
 ### 原则
@@ -113,8 +114,8 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 
 | # | 方法 | 类型 | 期刊/年 | Exemplar | 备注 |
 |:--|:---|:---|:---|:---:|:---|
-| 1 | Naive fine-tune | 下界 | — | 0 | 最基础退化基线 |
-| 2 | Frozen + prototype | 下界 | — | 0 | 冻结 backbone |
+| 1 | Naive fine-tune | 下界 | — | 0 | 使用 S2CM backbone，顺序微调无任何抗遗忘 |
+| 2 | Frozen + prototype | 下界 | — | 0 | 使用 S2CM backbone，Task 0 后冻结，cosine NCM |
 | 3 | EWC | 经典无回放 | PNAS 2017 | 0 | 正则化基线 |
 | 4 | LwF | 经典无回放 | ECCV 2016 | 0 | 蒸馏基线 |
 | 5 | ACIL | 现代无回放 | NeurIPS 2022 | 0 | 解析/原型基线 |
@@ -123,7 +124,7 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 | 8 | LUCIR | 回放 | CVPR 2019 | 20/cls | 经典 replay, cosine classifier |
 | 9 | PODNet | 回放 | ECCV 2020 | 20/cls | 强蒸馏 + replay, 注明 CNN/NME |
 | 10 | FOSTER | 回放 | ECCV 2022 | 20/cls | 强 replay, 原文默认 head |
-| 11 | Joint training | 上界 | — | — | Oracle upper bound |
+| 11 | Joint training | 上界 | — | all | S2CM backbone，所有 9 task 数据合并一次性训练，同 Ours 的 lr/epoch |
 | — | **Ours (CMCD-LoRA+SHINE)** | 无回放 | — | **0** | 主方法 |
 
 ### Replay 协议
@@ -179,6 +180,8 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 
 ## Ablation Study (已确定)
 
+所有 ablation 在 **9-task MTH、3-seed** 上跑，与主实验一致。
+
 ### 主表（6 个配置）
 
 | # | 配置 | 改动 | 验证的 claim |
@@ -187,7 +190,7 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 | 2 | w/o SHINE | 去掉域对齐 | 域对齐的贡献 |
 | 3 | w/o DCR | 去掉 prototype 校正，保留 prototype classifier | Prototype 校正的贡献 |
 | 4 | Symmetric LoRA | HSI rank = LiDAR rank = 总预算/2（如各 rank=6） | 不对称适配的必要性 |
-| 5 | Shared spatial adapter | HSI 空间和 LiDAR 空间共享同一个 LoRA | 解耦设计的必要性 |
+| 5 | Shared spatial adapter | HSI 空间和 LiDAR 空间共享同一个 LoRA，rank = HSI rank（如 rank=4） | 解耦设计的必要性 |
 | 6 | Spectral LoRA | 只在光谱分支加 LoRA，空间分支冻结 | 反向验证：应适配空间而非光谱 |
 
 阅读顺序：域对齐 → 校正 → 适配策略 → 结构设计 → 核心假设验证
@@ -247,10 +250,73 @@ runs/
 
 ---
 
-## TODO
-- [ ] Patch size sweep（Ours + Naive 验证集）
-- [ ] 实现实验 logging 框架
-- [ ] 实现 4 个第三方 backbone 的 drift observation 实验
-- [ ] 按原文实现 12 个 baseline 的 HSI+LiDAR 适配
-- [ ] 全部 3-seed MTH 跑完
-- [ ] Ablation 6 配置 + 2 supplementary
+---
+
+## Protocol Freeze (锁定协议)
+
+以下为最终锁定的实验协议，不再修改：
+
+| 协议项 | 锁定值 |
+|:---|:---|
+| 主实验 task 设定 | 9 tasks (3 datasets × 3 tasks/dataset), MTH |
+| Observation task 设定 | 3 tasks (dataset-as-task), MTH（诊断实验） |
+| Replay budget | 20 exemplars/class (K = 20 × 32 = 640) |
+| Patch size | 验证集 sweep 后锁死；fallback = 11×11 |
+| 主指标 | **Avg TAg**（主表主列）|
+| 补充指标 | OA, AA, Kappa, Forgetting, BWT（补充表/附录） |
+| Joint training backbone | S2CM（与 Ours 对齐） |
+| Naive / Frozen backbone | S2CM（与 Ours 对齐） |
+| 所有其他 baseline backbone | 按各自原文 |
+| Seed | 3 seed (0, 1, 2) |
+
+---
+
+## Claim-to-Evidence (贡献-证据对应)
+
+| Contribution | 主要证据 | 位置 |
+|:---|:---|:---|
+| C1: 漂移不对称现象 | Observation 实验：4 backbone × 3 seed 的 CKA 漂移曲线 | 主文 Fig. 1 |
+| C1: 解耦+不对称适配 | Ablation: Symmetric LoRA / Shared adapter / Spectral LoRA | 主文 Ablation Table |
+| C2: SHINE 域对齐 | Ablation: w/o SHINE | 主文 Ablation Table |
+| C3: 无回放竞争力 | 主表: 12 方法对比 | 主文 Main Table |
+| 补充: DCR 贡献 | Ablation: w/o DCR | 主文 Ablation Table |
+| 补充: Prototype vs FC | Ablation: FC head | Supplementary |
+| 补充: LoRA 本身贡献 | Ablation: w/o LoRA | Supplementary |
+| 补充: 低内存 replay | 5/cls replay ablation | Supplementary |
+
+---
+
+## Figure Plan (图表计划)
+
+### 主文
+| 图/表 | 内容 | 数据来源 |
+|:---|:---|:---|
+| Fig. 1 | Drift observation: 4 backbone 的 CKA 漂移曲线 (spec/hsi_spa/lid_spa) | drift observation 实验 |
+| Fig. 2 | 方法框架图 | 手绘/AI 绘图 |
+| Fig. 3 | Classification maps: GT + Ours + 2-3 代表性 baseline，每 domain 一列 | predictions parquet |
+| Fig. 4 | Task-wise accuracy 演化曲线 (Ours vs baselines) | task_metrics.csv |
+| Table 1 | 主表: 12 方法 × (Avg TAg, per-dataset, Forgetting) | metrics_summary.json |
+| Table 2 | Ablation: 6 配置 | ablation runs |
+
+### Supplementary
+| 图/表 | 内容 |
+|:---|:---|
+| Fig. S1 | t-SNE per domain/task |
+| Fig. S2 | 9-task 漂移曲线（验证 observation 在 9-task 下一致性） |
+| Fig. S3 | Drift ratio bar chart (spatial/spectral per backbone) |
+| Table S1 | 完整 per-class accuracy |
+| Table S2 | Supplementary ablation (w/o LoRA, FC head) |
+| Table S3 | 5/cls replay memory ablation |
+| Table S4 | Confusion matrices |
+
+---
+
+## TODO (按执行顺序)
+
+1. [ ] **Patch size sweep**（Ours + Naive 验证集，{7,9,11,13,15}）→ 锁死 patch size
+2. [ ] **实现实验 logging 框架**（统一目录结构 + 记录格式）
+3. [ ] **实现 4 个第三方 backbone** 的 drift observation 实验
+4. [ ] **按原文实现 11 个 baseline** 的 HSI+LiDAR 适配（Naive/Frozen 用 S2CM 不需额外实现）
+5. [ ] **全部 3-seed MTH 跑完**（baseline + ours + ablation）
+6. [ ] **Ablation** 6 主表 + 2 supplementary
+7. [ ] **画图**：classification maps, drift curves, accuracy curves

@@ -119,12 +119,19 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 | 4 | LwF | 经典无回放 | ECCV 2016 | 0 | 蒸馏基线 |
 | 5 | ACIL | 现代无回放 | NeurIPS 2022 | 0 | 解析/原型基线 |
 | 6 | PASS++ | 现代无回放 | TPAMI 2025 | 0 | 最新无回放 SOTA；若迁移不稳定则用 FCS (CVPR'24) 替补 |
-| 7 | iCaRL | 回放 | CVPR 2017 | 5/cls | 经典 replay |
-| 8 | LUCIR | 回放 | CVPR 2019 | 5/cls | 经典 replay |
-| 9 | PODNet | 回放 | ECCV 2020 | 5/cls | 强蒸馏 + replay |
-| 10 | FOSTER | 回放 | ECCV 2022 | 5/cls | 强 replay |
+| 7 | iCaRL | 回放 | CVPR 2017 | 20/cls | 经典 replay, NME 推理 |
+| 8 | LUCIR | 回放 | CVPR 2019 | 20/cls | 经典 replay, cosine classifier |
+| 9 | PODNet | 回放 | ECCV 2020 | 20/cls | 强蒸馏 + replay, 注明 CNN/NME |
+| 10 | FOSTER | 回放 | ECCV 2022 | 20/cls | 强 replay, 原文默认 head |
 | 11 | Joint training | 上界 | — | — | Oracle upper bound |
 | — | **Ours (CMCD-LoRA+SHINE)** | 无回放 | — | **0** | 主方法 |
+
+### Replay 协议
+- 统一预算：K = 20 × C_total（32类 → 640 total exemplars）
+- 分配：每 task 后 class-balanced shrink, m = K / seen_classes
+- 选择策略：Herding
+- 推理头：各方法按原文（iCaRL→NME, LUCIR→cosine, PODNet→注明, FOSTER→原文默认）
+- 附录补 5/cls 低内存版本作为 memory ablation
 
 ### 暂不放主表
 - **EASE** (CVPR'24), **RanPAC** (NeurIPS'23)：强依赖 ViT + ImageNet PTM，HSI+LiDAR 无公平的预训练对应物

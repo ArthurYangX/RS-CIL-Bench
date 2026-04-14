@@ -1,0 +1,42 @@
+\section{Related Work}
+\label{sec:related}
+
+\subsection{HSI+LiDAR Multimodal Classification}
+
+Deep learning approaches for joint HSI+LiDAR classification have evolved from early CNN-based methods~\cite{chen2016deep3dcnn} to diverse fusion architectures.
+Coupled CNNs~\cite{hang2020coupled} use partially shared convolutional streams for HSI and LiDAR.
+FusAtNet~\cite{mohla2020fusatnet} applies cross-modal attention with a shared feature hierarchy.
+S2ENet~\cite{fang2022s2enet} employs cross-enhancement modules that tightly couple spectral and spatial features.
+MAHiDFNet~\cite{li2022mahidfnet} maintains independent 1D spectral and 2D spatial CNN branches.
+HCT~\cite{ghosh2023hct} combines 3D convolutions with transformer fusion in a two-stream architecture.
+More recently, state-space models (Mamba)~\cite{gu2024mamba} have shown promise for efficient long-sequence spectral modeling.
+Our \backbonename{} backbone adopts a tri-branch design---1D Mamba for spectral, Siamese 2D VSSBlocks for HSI-spatial and LiDAR-spatial---maintaining a separate spectral stream to preserve spectral--spatial drift independence.
+None of these fusion architectures consider incremental class arrival or cross-domain deployment.
+
+\subsection{Class-Incremental Learning}
+
+CIL methods fall into three families:
+(i)~\emph{regularization-based} methods such as EWC~\cite{kirkpatrick2017ewc} and LwF~\cite{li2017lwf} that constrain weight updates to preserve old-task knowledge;
+(ii)~\emph{replay-based} methods such as iCaRL~\cite{rebuffi2017icarl}, LUCIR~\cite{hou2019lucir}, PODNet~\cite{douillard2020podnet}, and FOSTER~\cite{wang2022foster} that store or generate exemplars; and
+(iii)~\emph{analytic/prototype-based} methods such as ACIL~\cite{zhuang2022acil} and PASS++~\cite{zhu2025pass} that avoid replay entirely by maintaining class statistics or generating pseudo-features.
+
+In the HSI domain, DCPRN~\cite{deng2024dcprn} combines dual knowledge distillation with prototype replay, and CrossACL~\cite{xu2025crossacl} applies analytic continual learning with cross-projection.
+Most recently, PMPT~\cite{yang2026pmpt} applies prototype-based meta-prompt tuning for few-shot class-incremental learning on multimodal remote sensing data, achieving strong results on single-domain benchmarks with pre-trained ViT backbones.
+However, existing HSI-CIL methods, including PMPT, operate on individual datasets rather than across geographic domains with heterogeneous sensors, and assume access to a strong pre-trained backbone---conditions that differ fundamentally from our cross-domain buffer-free setting.
+
+\subsection{Parameter-Efficient Continual Learning}
+
+Parameter-efficient fine-tuning (PEFT) adapts pre-trained models with minimal parameter overhead, making it naturally suited to CIL where catastrophic forgetting scales with the number of updated parameters.
+Prompt-based approaches---L2P~\cite{wang2022l2p}, DualPrompt~\cite{wang2022dualprompt}, CODA-Prompt~\cite{smith2023codaprompt}---learn task-specific prompts for a frozen ViT backbone.
+LoRA-based methods---InfLoRA~\cite{liang2024inflora}, SD-LoRA~\cite{sdlora2025}---apply low-rank updates with orthogonal or decoupled constraints.
+EASE~\cite{zhou2024ease} employs expandable adapters with prototype complement.
+These methods assume a single-modality backbone (typically an ImageNet-pretrained ViT) and apply \emph{uniform} adaptation across all layers.
+These methods are not directly comparable to our setting without nontrivial architectural redesign: (1)~their ViT patch embeddings are designed for 3-channel RGB input and would require re-engineering for 36-band HSI $+$ 2-channel LiDAR, and (2)~they rely on large-scale pre-training (ImageNet-21k) for the frozen backbone to provide meaningful features---no such pre-trained foundation model currently exists for HSI+LiDAR multimodal data.
+In contrast, \methodname{} exploits the multimodal structure of HSI+LiDAR to make \emph{modality-asymmetric} adaptation decisions: the spectral branch is frozen as a stable anchor while the two spatial branches receive low-rank adapters with rank matched to each branch's effective adaptation dimensionality.
+
+\subsection{Feature Normalization for Domain Alignment}
+
+Domain-specific batch normalization (DSBN)~\cite{chang2019dsbn} maintains per-domain running statistics to reduce domain shift.
+Feature whitening~\cite{pan2019switchable} decorrelates features to remove style-specific information.
+In CIL, post-hoc normalization has received less attention, though recent work on multi-prototype methods~\cite{multiproto2025} shows that feature calibration can substantially improve prototype-based classifiers.
+Our SHINE module follows this line: it computes per-domain, per-branch whitening statistics and applies Z-score normalization before cosine prototype matching, effectively eliminating the distributional gap between features from different geographic domains.

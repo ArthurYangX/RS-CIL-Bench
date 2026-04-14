@@ -1,0 +1,42 @@
+\section{Introduction}
+\label{sec:intro}
+
+Automated land-cover classification from co-registered hyperspectral imagery (HSI) and light detection and ranging (LiDAR) data underpins precision agriculture, urban planning, and environmental monitoring~\cite{hong2022multimodal}.
+In practice, such systems must be deployed across geographically diverse regions and updated as new land-cover categories emerge---without the luxury of retraining from scratch on accumulated data.
+Class-incremental learning (CIL)~\cite{rebuffi2017icarl} provides a framework for sequential adaptation, yet existing CIL methods face three compounding challenges in the remote sensing context.
+
+\textbf{First, cross-domain shift.}
+Unlike standard CIL benchmarks that draw all tasks from a single distribution, remote sensing CIL must contend with distribution shifts caused by differences in atmospheric conditions, sensor configurations, spatial resolution, and land-cover composition across geographic domains.
+\textbf{Second, multimodal heterogeneity.}
+HSI and LiDAR capture fundamentally different physical properties---material spectral reflectance versus surface elevation---and their feature representations respond to domain shift in markedly different ways.
+\textbf{Third, storage efficiency.}
+The sheer volume of remote sensing data makes maintaining large exemplar buffers impractical, demanding storage-efficient solutions that minimize the additional memory footprint beyond the model itself.
+
+No prior work simultaneously addresses all three challenges.
+Existing HSI CIL methods~\cite{deng2024dcprn,xu2025crossacl} operate on single datasets with homogeneous domains.
+Cross-domain HSI classification~\cite{hong2022multimodal} does not consider incremental class arrival.
+Storage-efficient CIL methods~\cite{zhuang2022acil,zhu2025pass} are designed for natural-image benchmarks and do not handle multimodal inputs or cross-domain shifts.
+
+\textbf{A key observation.}
+Through quantitative drift analysis across \emph{six} HSI+LiDAR fusion architectures with varying degrees of branch coupling, we discover an \emph{architecture-dependent drift asymmetry}: in independent-branch architectures, the spatial branches drift up to 5.8$\times$ more than the spectral branch across geographic domains (measured by Linear CKA), whereas this asymmetry largely vanishes in tightly coupled architectures where branches share parameters.
+Concretely, the drift ratio (spatial/spectral) correlates positively with three architectural factors: (1)~branch independence (most critical), (2)~parameter capacity asymmetry between spectral and spatial branches, and (3)~the location of feature extraction relative to coupling layers.
+
+This finding is \emph{not} a universal physical law about spectral stability.
+Rather, it is a \emph{structural prior} specific to independent-branch fusion designs---and one that can be exploited as a principled design signal.
+We therefore explicitly scope our method to \emph{independent-branch multimodal fusion architectures}, where the drift asymmetry is structurally present and exploitable; applying the same strategy to coupled architectures (where asymmetry vanishes) would yield no benefit.
+Instead of uniformly suppressing all drift (as in EWC~\cite{kirkpatrick2017ewc} or LwF~\cite{li2017lwf}), one can design a \emph{non-uniform adaptation strategy} that leverages the naturally stable spectral branch as an anchor and concentrates plasticity on the drifting spatial branches.
+
+We exploit this insight to propose \methodname{} (Cross-Modal Compensated Drift LoRA), a \emph{buffer-free} framework that eliminates the need for a separate exemplar replay buffer by leveraging within-domain training data accessibility---a natural property of fixed-sensor remote sensing deployments---while storing only compact prototypes, adapter weights, and normalization statistics (${\sim}75\times$ less extra storage than replay methods; see Section~\ref{sec:main_results} for the full data access protocol). \methodname{} is built on four ideas:
+\begin{itemize}
+    \item A \emph{tri-branch Mamba backbone} (\backbonename{}) with a separate spectral stream and Siamese spatial processing, maintaining spectral--spatial independence to preserve the exploitable drift asymmetry.
+    \item \emph{Asymmetric low-rank adaptation}: after warm-up, the spectral branch is frozen as a stable anchor; LoRA adapters are inserted only into the two spatial branches, with rank matched to each branch's effective adaptation dimensionality (LiDAR~$>$~HSI-spatial, validated by rank allocation comparison).
+    \item \emph{SHINE} (per-domain whitening normalization): a post-hoc normalization that eliminates the distributional gap between query features and prototypes across domains.
+    \item \emph{DCR} (drift-compensated reconstruction): a prototype correction mechanism that compensates for the residual drift of old-class prototypes after adapter training.
+\end{itemize}
+
+Our contributions are threefold:
+\begin{enumerate}
+    \item We reveal an \emph{architecture-dependent drift asymmetry} in cross-domain HSI+LiDAR incremental learning: spatial features drift significantly more than spectral features in independent-branch architectures (HCT: 5.76$\times$, \backbonename{}: 4.98$\times$), while the asymmetry disappears in coupled designs (S2ENet: 1.16$\times$, FusAtNet: 0.38$\times$). We identify this as a \emph{structural prior} of independent-branch architectures and design an asymmetric LoRA framework that exploits it.
+    \item We propose SHINE, a per-domain whitening normalization that aligns feature distributions across geographic domains at inference time, and DCR, a drift-compensated prototype reconstruction that corrects old-class prototypes after spatial adaptation.
+    \item On a 9-task cross-domain benchmark (MUUFL$\to$Trento$\to$Houston\,2013, 32 classes), \methodname{} achieves $84.5\% \pm 0.9$ balanced accuracy \emph{without maintaining a replay buffer}, surpassing all replay-free baselines by over $40$\,pp and outperforming the best replay methods (iCaRL $77.9\%$, FOSTER $77.0\%$ on their original backbones) while requiring ${\sim}75\times$ less extra storage. Comprehensive evaluation across all six domain orderings confirms consistent advantages over replay baselines ($80.9\%$ vs.\ $77.8\%$ and $77.2\%$).
+\end{enumerate}

@@ -1,0 +1,148 @@
+
+\subsection{Theoretical Analysis}
+\label{app:theory}
+
+We provide formal analysis of the three core design choices in \methodname{} under \emph{local linearization assumptions}.
+These results characterize the behavior of the method in the vicinity of the frozen-backbone operating point and are intended as design intuitions, not global guarantees for the full nonlinear training dynamics.
+Throughout, we use $f = [\fspec;\, \fhsi;\, \flid] \in \R^{3d}$ for concatenated features from the three branches, and $\mu_c \in \R^{3d}$ for the class-$c$ prototype.
+
+\subsubsection{Lemma 1: DCR Correction Under Linear LoRA}
+\label{app:dcr_exact}
+
+\begin{lemma}[DCR is exact under single-layer linear LoRA]
+Let $f_b(x)$ denote the frozen spatial-branch feature for input $x$, and let the domain-specific LoRA adapter produce $\tilde{f}_b(x) = (I + \Delta W_b)\, f_b(x)$ where $\Delta W_b = \alpha\, W_{\mathrm{up}} W_{\mathrm{down}}$ is the adapter for the class's domain.
+Then the DCR-corrected prototype $\hat{\mu}_c^b = (I + \Delta W_b)\,\mu_c^b$ equals the mean of the adapted features exactly:
+\begin{equation}
+    (I + \Delta W_b)\,\mu_c^b = \frac{1}{|S_c|}\sum_{x \in S_c} (I + \Delta W_b)\,f_b(x)
+\end{equation}
+\end{lemma}
+\begin{proof}
+$(I + \Delta W_b)$ is a fixed linear operator. The mean commutes with linear maps: $(I + \Delta W_b)\,\mathbb{E}[f_b] = \mathbb{E}[(I + \Delta W_b)\,f_b]$.
+\end{proof}
+
+This holds for any adapter and any rank.
+It breaks down only if adaptation includes nonlinearities (e.g., adapters with activation functions), which standard LoRA does not.
+Under the stated single-layer linear assumption, DCR is exact when updating old-class prototypes.
+In multi-block architectures where nonlinearities intervene between LoRA layers, this degrades to a first-order approximation with residual error of $O(\|\Delta W\|^2)$.
+Nevertheless, the linear correction provides a principled initialization that replay-based methods, which must approximate old-class distributions from a finite exemplar set, cannot guarantee.
+
+\subsubsection{Proposition 1: Independent Branches Reduce Cross-Domain Interference}
+\label{app:interference}
+
+This proposition provides intuition for the core architectural insight from Section~\ref{sec:observation}: why independent branches lead to less catastrophic forgetting than shared-parameter designs.
+
+\begin{proposition}[Cross-branch interference under new-domain adaptation]
+\label{prop:interference}
+Let $\mathcal{R}_{\mathrm{old}}(\theta) = \mathbb{E}_{(x,y) \sim \mathcal{D}_{\mathrm{old}}}[\ell(f_\theta(x), y)]$ be the old-task risk, and let $\theta^*$ be the parameters after warm-up.
+After one gradient step on new-domain data with learning rate $\eta$, the second-order approximation of old-task risk increase is:
+\begin{equation}
+    \mathcal{R}_{\mathrm{old}}(\theta^* + \delta) - \mathcal{R}_{\mathrm{old}}(\theta^*) \approx \underbrace{g_{\mathrm{old}}^\top \delta}_{\text{first-order}} + \tfrac{1}{2}\,\underbrace{\delta^\top H_{\mathrm{old}}\, \delta}_{\text{second-order}}
+\label{eq:risk_increase}
+\end{equation}
+where $g_{\mathrm{old}} = \nabla_\theta \mathcal{R}_{\mathrm{old}}(\theta^*)$, $H_{\mathrm{old}} = \nabla^2_\theta \mathcal{R}_{\mathrm{old}}(\theta^*)$, and $\delta = -\eta\, g_{\mathrm{new}}$ is the parameter update.
+
+\textbf{(a) Shared-parameter architecture.}
+Partition $\theta = [\theta_{\mathrm{shared}};\, \theta_{\mathrm{spec}};\, \theta_{\mathrm{spa}}]$. The Hessian $H_{\mathrm{old}}$ contains cross-block terms $H_{\mathrm{shared,spa}}$ and $H_{\mathrm{shared,spec}}$ that couple all branches.
+Adapting $\theta_{\mathrm{spa}}$ to the new domain propagates through $H_{\mathrm{shared,spa}}$ to damage the shared representation, increasing old-task risk for \emph{all} branches.
+
+\textbf{(b) Independent-branch architecture with spectral freezing.}
+When branches share no parameters, the feature Jacobians $J_b = \partial f_b / \partial \theta_b$ are block-diagonal, meaning the Hessian is \emph{approximately} block-diagonal:
+\begin{equation}
+    H_{\mathrm{old}} \approx \mathrm{diag}(H_{\mathrm{spec}},\, H_{\mathrm{hsi}},\, H_{\mathrm{lid}})
+\end{equation}
+The approximation is exact when the loss decomposes additively over branches.
+In practice, the classifier operates on concatenated features $f = [\fspec;\, \fhsi;\, \flid]$, introducing residual cross-branch coupling through the shared loss surface. The magnitude of this coupling depends on the classifier's sensitivity to cross-branch feature interactions and is not analytically bounded here.
+With the spectral branch frozen ($\delta_{\mathrm{spec}} = 0$), the old-task risk increase is dominated by spatial-branch terms:
+\begin{equation}
+    \mathcal{R}_{\mathrm{old}}(\theta^* + \delta) - \mathcal{R}_{\mathrm{old}}(\theta^*) \approx \sum_{b \in \{\mathrm{hsi, lid}\}} \left(g_{\mathrm{old},b}^\top \delta_b + \tfrac{1}{2}\,\delta_b^\top H_b\, \delta_b\right) + O(\epsilon_{\mathrm{cross}})
+\label{eq:independent_risk}
+\end{equation}
+where $\epsilon_{\mathrm{cross}}$ captures the residual cross-branch coupling through the classifier.
+The spectral branch's contribution is \emph{approximately zero}---because $\delta_{\mathrm{spec}} = 0$ and cross-branch terms are small for independent architectures.
+\end{proposition}
+
+\textbf{Interpretation and limitations.}
+The key qualitative insight is robust: in independent architectures, adapting spatial parameters causes substantially less collateral damage to the spectral representation than in shared architectures.
+The block-diagonal Hessian is an approximation---the shared classifier introduces residual coupling---but the empirical drift measurements in Section~\ref{sec:obs_results} confirm the predicted pattern: independent architectures show drift ratios of $1.5$--$5.8\times$ (spatial drift dominates, spectral is stable), while coupled architectures show ratios of $0.4$--$1.6\times$.
+
+\subsubsection{Remark: Margin-Preserving Adaptation via Spectral Anchoring + DCR}
+\label{app:margin}
+
+We sketch an intuitive argument showing that spectral anchoring combined with DCR helps preserve the \emph{classification margin} of old classes under domain-selective LoRA adaptation. The following analysis uses a simplified single-centroid cosine scorer for tractability; the qualitative conclusion extends to the multi-centroid scorer used in practice, since each centroid component undergoes the same LoRA transformation.
+
+\begin{remark}[Old-class margin preservation, simplified scorer]
+\label{remark:margin}
+Let $s(c \mid x) = \cosim(f(x),\, \mu_c)$ be the cosine similarity score for a single centroid (the bound applies to each centroid component in our multi-centroid scorer).
+Define the margin of sample $x$ with true class $y$ as $m(x) = s(y \mid x) - \max_{c \neq y} s(c \mid x)$.
+After adapting to a new domain with LoRA update $\Delta W_b$ on spatial branches ($b \in \{\mathrm{hsi, lid}\}$) and applying DCR, the margin perturbation satisfies:
+\begin{equation}
+    |m'(x) - m(x)| \leq \frac{4\,\epsilon_{\mathrm{spa}}}{(1 - \epsilon_{\mathrm{spa}})^2}
+\label{eq:margin_bound}
+\end{equation}
+where $\epsilon_{\mathrm{spa}} = \max_{b \in \{\mathrm{hsi,lid}\}} \|\Delta W_b\|$ controls the spatial perturbation magnitude, and $m'$ is the margin under the adapted model with DCR-corrected prototypes.
+\end{remark}
+
+\begin{proof}[Sketch]
+After DCR correction, both the query feature and the prototype undergo the same linear transformation $(I + \Delta W_b)$ on spatial branches, with the spectral component unchanged.
+Write the full adapted feature as $\tilde{f} = [\fspec;\, (I+\Delta W_{\mathrm{hsi}})\fhsi;\, (I+\Delta W_{\mathrm{lid}})\flid]$ and similarly for prototypes.
+
+The cosine similarity between adapted query and DCR-corrected prototype can be expressed as:
+\begin{equation}
+    \cosim(\tilde{f}, \tilde{\mu}_c) = \frac{\tilde{f}^\top \tilde{\mu}_c}{\|\tilde{f}\|\,\|\tilde{\mu}_c\|}
+\end{equation}
+
+Since the spectral component is identical in both numerator terms and $\Delta W_b$ has spectral norm $\epsilon_b \leq \epsilon_{\mathrm{spa}}$, we bound $\|\tilde{f} - f\| \leq \epsilon_{\mathrm{spa}} \|f_{\mathrm{spa}}\|$ where $f_{\mathrm{spa}} = [\fhsi;\,\flid]$.
+Applying the Lipschitz property of cosine similarity (which has Lipschitz constant $\leq 2/\|f\|$ for unit-normed arguments), the per-class score perturbation satisfies $|s'(c|x) - s(c|x)| \leq \frac{2\epsilon_{\mathrm{spa}}}{1-\epsilon_{\mathrm{spa}}}$, and the margin perturbation is at most twice the per-class bound. \qed
+\end{proof}
+
+\textbf{Key insight.}
+Without DCR, the query features pass through $(I + \Delta W_b)$ but old prototypes remain stale, creating a \emph{systematic} mismatch that grows with $\|\Delta W_b\|$ and is not captured by the symmetric bound above.
+DCR eliminates this asymmetry, ensuring that the margin perturbation depends only on the \emph{second-order} effect of the transformation on cosine geometry, not on a first-order feature-prototype misalignment.
+
+Without spectral freezing, $\epsilon_{\mathrm{spa}}$ would include spectral-branch updates, increasing the perturbation bound by the ratio of total to spatial-only update norms.
+The combination of spectral anchoring (reduces the set of perturbed dimensions) and DCR (eliminates asymmetric mismatch) is what keeps $|m' - m|$ small.
+
+\subsubsection{Proposition 3: Asymmetric Rank Allocation Under Budget Constraint}
+\label{app:rank_allocation}
+
+\begin{proposition}[Rank allocation under budget constraint]
+\label{prop:rank}
+For each spatial branch $b \in \{\mathrm{hsi, lid}\}$, let $\Delta W_b^* \in \R^{d \times d}$ be the ideal (full-rank) weight update that perfectly compensates the domain shift, with singular values $\sigma_1^{(b)} \geq \sigma_2^{(b)} \geq \cdots \geq \sigma_d^{(b)}$.
+A rank-$r_b$ LoRA adapter incurs approximation error (by the Eckart--Young--Mirsky theorem):
+\begin{equation}
+    \mathcal{E}_b(r_b) = \|\Delta W_b^* - [\Delta W_b^*]_{r_b}\|_F^2 = \sum_{i=r_b+1}^{d} (\sigma_i^{(b)})^2
+\label{eq:eckart_young}
+\end{equation}
+Given a total rank budget $R = r_{\mathrm{hsi}} + r_{\mathrm{lid}}$, the allocation minimizing $\mathcal{E}_{\mathrm{hsi}}(r_{\mathrm{hsi}}) + \mathcal{E}_{\mathrm{lid}}(r_{\mathrm{lid}})$ satisfies the KKT condition:
+\begin{equation}
+    (\sigma_{r_{\mathrm{hsi}}+1}^{(\mathrm{hsi})})^2 = (\sigma_{r_{\mathrm{lid}}+1}^{(\mathrm{lid})})^2
+\label{eq:kkt_rank}
+\end{equation}
+That is, under the stated linearization assumptions, the \emph{marginal} tail energy should be equalized across branches at the budget-constrained optimum. In practice, training dynamics and nonlinearities introduce deviations; the proposition provides a principled initialization heuristic validated by the rank allocation comparison (Table~\ref{tab:rank_allocation}).
+\end{proposition}
+
+\begin{proof}
+The objective is to minimize $\mathcal{E}(r_{\mathrm{hsi}}, r_{\mathrm{lid}}) = \sum_{i > r_{\mathrm{hsi}}} (\sigma_i^{(\mathrm{hsi})})^2 + \sum_{i > r_{\mathrm{lid}}} (\sigma_i^{(\mathrm{lid})})^2$ subject to $r_{\mathrm{hsi}} + r_{\mathrm{lid}} = R$ with $r_b \in \mathbb{Z}_{\geq 0}$.
+Moving one unit of rank from $b_1$ to $b_2$ changes the objective by $(\sigma_{r_{b_1}}^{(b_1)})^2 - (\sigma_{r_{b_2}+1}^{(b_2)})^2$.
+At optimum, no transfer improves the objective, yielding the equalized marginal condition~\eqref{eq:kkt_rank}. \qed
+\end{proof}
+
+\textbf{Connection to asymmetric rank allocation.}
+Proposition~\ref{prop:rank} predicts that branches whose ideal update $\Delta W_b^*$ has a slower-decaying singular spectrum (energy spread across more directions) require higher rank.
+Table~\ref{tab:rank_allocation} validates this empirically: at the same total budget ($R{=}12$), our asymmetric allocation ($r_{\mathrm{hsi}}{=}4$, $r_{\mathrm{lid}}{=}8$) outperforms the symmetric baseline ($6,6$) by $1.1$\,pp.
+
+\textbf{Intuition for asymmetric allocation.}
+The relevant quantity is \emph{effective adaptation dimensionality}, not CKA drift magnitude.
+CKA measurements show comparable or even lower drift for LiDAR-spatial than HSI-spatial on certain domains (e.g., lid/hsi drift ratio ${\approx}0.5$ on MUUFL).
+Yet the LiDAR branch needs more rank because it is the \emph{sole carrier} of elevation information with no spectral branch backup, requiring adaptation across more diverse directions even when the total change magnitude is moderate.
+Table~\ref{tab:rank_allocation} validates this: at the same budget, our asymmetric allocation ($4,8$) outperforms the symmetric baseline ($6,6$).
+
+\subsubsection{Remark: SHINE as Affine Nuisance Removal}
+\label{app:shine_remark}
+
+SHINE normalization (Eq.~\ref{eq:shine_norm}) can be understood as removing an affine domain nuisance.
+Model the domain shift as an element-wise affine transformation $f_b^{(d)} = a_d \odot f_b + b_d$ where $a_d, b_d \in \R^d$ are domain-specific scale and bias.
+Z-score normalization with domain statistics $(\mu_d^b, \sigma_d^b)$ inverts this nuisance exactly when $a_d = \sigma_d^b / \sigma_0^b$ and $b_d = \mu_d^b - a_d \odot \mu_0^b$ for some reference domain 0.
+This holds per-coordinate and does not require Gaussianity.
+
+The +5.5pp gain from SHINE (84.5\% $\to$ 79.0\% without) indicates that the affine component is the dominant cross-domain nuisance in this setting---consistent with the neural collapse literature showing that deep features exhibit approximately affine class-conditional structure~\cite{papyan2020prevalence}.

@@ -1,0 +1,124 @@
+\section{Architecture-Dependent Drift Asymmetry}
+\label{sec:observation}
+
+Before designing the adaptation strategy, we investigate how feature representations from different modality branches shift during cross-domain incremental learning.
+This section presents a systematic drift analysis across six fusion architectures and identifies the architectural factors that govern the spectral-spatial drift asymmetry.
+
+\subsection{Experimental Protocol}
+\label{sec:obs_protocol}
+
+\paragraph{Setup.}
+We evaluate six representative HSI+LiDAR fusion backbones spanning a spectrum of branch coupling designs (Table~\ref{tab:backbones}):
+\begin{itemize}
+    \item \textbf{Coupled CNNs}~\cite{hang2020coupled}: dual-stream CNN with 51\% shared parameters (conv2/conv3 cross-branch sharing).
+    \item \textbf{HCT}~\cite{ghosh2023hct}: hybrid CNN-Transformer with fully independent spectral (Conv3D) and spatial (Transformer) streams.
+    \item \textbf{MAHiDFNet}~\cite{li2022mahidfnet}: independent 1D spectral CNN, 2D HSI spatial CNN, and 2D LiDAR spatial CNN with pixel attention.
+    \item \textbf{FusAtNet}~\cite{mohla2020fusatnet}: shared feature hierarchy with spectral self-attention and LiDAR-guided spatial cross-attention.
+    \item \textbf{S2ENet}~\cite{fang2022s2enet}: cross-enhancement modules where spectral and HSI-spatial branches share all convolutional parameters.
+    \item \textbf{\backbonename{}} (Ours): tri-branch Mamba---1D Mamba SSM for spectral, Siamese 2D VSSBlocks for HSI-spatial and LiDAR-spatial (shared spatial blocks, independent input projections), with a lightweight cross-fusion module after the final VSSBlock.
+\end{itemize}
+
+Each backbone is trained on a simplified 3-task protocol (one task per dataset: MUUFL$\to$Trento$\to$Houston) using naive sequential fine-tuning (no replay, no regularization) to isolate pure cross-domain drift from class-incremental effects.
+After each task, we extract branch-level features from all three domain test sets.
+
+\paragraph{Metric.}
+We measure representational drift using \emph{Linear CKA}~\cite{kornblith2019cka}, which quantifies the similarity between feature representations at different training stages.
+For each branch $b \in \{\mathrm{spec}, \mathrm{hsi\_spa}, \mathrm{lid\_spa}\}$, we compute CKA between the task-0 checkpoint and the post-task-$t$ checkpoint on the same probe set:
+\begin{equation}
+    \mathrm{Drift}_b(t) = 1 - \mathrm{CKA}\!\left(F_b^{(0)},\; F_b^{(t)}\right)
+\label{eq:drift_cka}
+\end{equation}
+where $F_b^{(t)} \in \R^{n \times d}$ is the feature matrix of branch $b$ after task $t$, projected to $d{=}256$ dimensions.
+The \emph{drift ratio} is defined as $\mathrm{mean}(\mathrm{Drift}_{\mathrm{hsi\_spa}},\, \mathrm{Drift}_{\mathrm{lid\_spa}}) \,/\, \mathrm{Drift}_{\mathrm{spec}}$, computed at the final task and reported as the median across domains.
+All experiments are repeated with 3 random seeds.
+
+\begin{table}[t]
+\centering
+\caption{Feature extraction points for the six evaluated backbones. Each backbone has architecturally distinct spectral, HSI-spatial, and LiDAR-spatial feature extraction locations.}
+\label{tab:backbones}
+\small
+\begin{tabular}{p{1.5cm}p{1.8cm}p{1.8cm}p{1.8cm}}
+\toprule
+Backbone & Spectral & HSI-Spatial & LiDAR-Spatial \\
+\midrule
+Coupled CNNs & Shallow band-mixing conv & Deep patch conv & LiDAR stream output \\
+HCT & Conv3D + GAP & Fusion HSI CLS token & Fusion LiDAR CLS token \\
+MAHiDFNet & 1D conv (center pixel) & 2D CNN + PAM & LiDAR 2D CNN + PAM \\
+FusAtNet & Spectral self-attn output & LiDAR-guided cross-attn & LiDAR CNN branch \\
+S2ENet & Pre-SEEM spectral feat. & Pre-SAEM spatial feat. & LiDAR branch feat. \\
+\backbonename{} & Mamba SSM spectral & Siamese VSSBlocks HSI-spatial & Siamese VSSBlocks LiDAR-spatial \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Results: Drift Asymmetry is Architecture-Dependent}
+\label{sec:obs_results}
+
+Table~\ref{tab:drift_ratio} and Fig.~\ref{fig:drift} present the drift analysis results across all six backbones.
+
+\begin{table}[t]
+\centering
+\caption{Cross-domain drift ratio (spatial/spectral) for six HSI+LiDAR fusion architectures. The asymmetry is strongly correlated with branch independence: independent-branch designs exhibit ratios of 1.5--5.8$\times$, while coupled designs show ratios near or below 1.6$\times$. Mean$\pm$std over 3 seeds.}
+\label{tab:drift_ratio}
+\begin{tabular}{llcc}
+\toprule
+Backbone & Coupling Type & Drift Ratio & Independence \\
+\midrule
+HCT~\cite{ghosh2023hct} & Fully independent & $5.76 \pm 1.90$ & High \\
+\backbonename{} (Ours) & Siamese spatial & $4.98 \pm 3.31$ & High \\
+MAHiDFNet~\cite{li2022mahidfnet} & Independent & $1.50 \pm 0.34$ & Medium-High \\
+Coupled CNNs~\cite{hang2020coupled} & Partially shared & $1.64 \pm 0.13$ & Medium \\
+S2ENet~\cite{fang2022s2enet} & Highly coupled & $1.16 \pm 0.13$ & Low \\
+FusAtNet~\cite{mohla2020fusatnet} & Highly coupled & $0.38 \pm 0.05$ & Low \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/fig_drift_observation.pdf}
+    \vspace{2mm}
+    \includegraphics[width=\columnwidth]{figures/fig_drift_ratio.pdf}
+    \caption{Architecture-dependent drift asymmetry. \textbf{Top}: Per-branch CKA drift (1$-$CKA) for six backbones. Independent-branch architectures (HCT, \backbonename{}) show large spectral-spatial gaps; coupled architectures (S2ENet, FusAtNet) show minimal asymmetry. \textbf{Bottom}: Drift ratio (spatial/spectral) vs.\ architecture type, revealing a clear positive correlation with branch independence. Shaded regions: $\pm$1 std (3 seeds).}
+    \label{fig:drift}
+\end{figure}
+
+\paragraph{Finding 1: Drift asymmetry varies dramatically with architecture.}
+The drift ratio ranges from $0.38\times$ (FusAtNet) to $5.76\times$ (HCT)---more than an order-of-magnitude variation.
+Independent-branch architectures consistently show spatial drift $\gg$ spectral drift, while tightly coupled architectures exhibit roughly symmetric or even reversed drift patterns.
+This demonstrates that the spectral-spatial drift asymmetry is \emph{not} a universal physical property of the data modalities, but rather an \emph{architecture-dependent phenomenon}.
+
+\paragraph{Finding 2: Three correlated architectural factors.}
+We identify three factors that positively correlate with the drift ratio:
+\begin{enumerate}
+    \item \textbf{Spectral--spatial independence} (most critical): Architectures where the spectral branch shares no parameters with spatial processing (HCT, \backbonename{}) exhibit the strongest asymmetry. \backbonename{} uses Siamese spatial blocks (shared between HSI-spatial and LiDAR-spatial), but the spectral stream is fully separate, preserving spectral--spatial drift independence. When spectral and spatial branches share parameters (S2ENet: shared convolutions; FusAtNet: shared feature hierarchy), adaptation in one branch propagates to the other, equalizing drift across modalities.
+    \item \textbf{Parameter capacity asymmetry}: Spectral branches typically have fewer parameters than spatial branches (e.g., 1D convolution vs.\ 2D patch processing). In independent-branch designs, this capacity gap amplifies the drift ratio because the spectral branch has fewer parameters available to change.
+    \item \textbf{Feature extraction location}: Extracting features \emph{before} coupling layers (as in MAHiDFNet) preserves branch-level drift differences. Extracting \emph{after} coupling layers (as in FusAtNet's cross-attention output) averages out modality-specific drift patterns.
+\end{enumerate}
+
+\paragraph{Is the asymmetry trivially explained by parameter count?}
+One might argue that the spectral branch simply has fewer parameters and thus changes less.
+However, this explanation is insufficient for two reasons.
+First, FusAtNet's spectral self-attention module has \emph{more} parameters per layer than its spatial counterpart, yet shows a \emph{reversed} ratio ($0.38\times$)---the spectral branch drifts \emph{more}, not less, precisely because cross-modal attention couples the branches.
+Second, Coupled CNNs share conv2/conv3 across branches (equalizing capacity), yet still show a ratio near $1\times$ rather than showing the high asymmetry of HCT.
+This confirms that \textbf{branch independence, not parameter count alone, is the dominant factor}.
+The capacity asymmetry amplifies the ratio in independent designs but does not create it.
+
+\subsection{Design Implications}
+\label{sec:obs_implications}
+
+These findings yield three design principles that directly motivate \methodname{}:
+
+\textbf{(i) The asymmetry is a structural prior, not a deficiency.}
+In independent-branch architectures, the spectral branch naturally maintains stable representations across domains while the spatial branches absorb domain-specific variation.
+Rather than treating this as a problem to be fixed, we exploit it as a \emph{design signal}: the stable spectral branch serves as an anchor, and adaptation effort is concentrated on the drifting spatial branches.
+
+\textbf{(ii) Non-uniform adaptation outperforms uniform regularization.}
+Methods like EWC and LwF apply uniform regularization across all parameters, ignoring the modality-specific drift structure.
+Our observation suggests that adaptation budget should be allocated \emph{non-uniformly} across branches, with no adaptation on the stable spectral branch and LoRA adapters on the drifting spatial branches, with rank determined by each branch's effective adaptation dimensionality (Section~\ref{sec:ablation}).
+
+\textbf{(iii) Backbone choice matters.}
+We adopt the \backbonename{} backbone over alternatives such as HCT (which shows even higher asymmetry at $5.76\times$) because \backbonename{}'s Mamba-based architecture provides superior base classification accuracy while maintaining strong spectral--spatial independence.
+HCT's Conv3D-Transformer design, while exhibiting extreme drift asymmetry, yields lower absolute feature quality due to its limited spatial receptive field.
+The \backbonename{} backbone thus balances two objectives: \emph{maximizing drift asymmetry} for effective asymmetric adaptation and \emph{maximizing base classification quality} for strong initial representations after warm-up.
+This principled selection---choosing the backbone that best supports both the structural prior and the downstream classification task---is a key contribution of our framework.

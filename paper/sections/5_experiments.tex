@@ -1,0 +1,228 @@
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Experimental Setup}
+\label{sec:setup}
+
+\paragraph{Datasets.}
+We use three widely adopted HSI+LiDAR benchmarks spanning different geographic regions, sensor configurations, and land-cover vocabularies:
+\begin{itemize}
+    \item \textbf{MUUFL Gulfport} (Southern Mississippi, USA): 72 HSI bands (380--1050\,nm), 2 LiDAR channels (elevation + intensity), 11 classes, $325 \times 220$ pixels at 1\,m GSD.
+    \item \textbf{Trento} (Trento, Italy): 63 HSI bands (400--990\,nm), 1 LiDAR channel (DSM), 6 classes, $600 \times 166$ pixels at 1\,m GSD.
+    \item \textbf{Houston 2013} (Houston, TX, USA): 144 HSI bands (380--1050\,nm), 1 LiDAR channel (DSM), 15 classes, $349 \times 1905$ pixels at 2.5\,m GSD.
+\end{itemize}
+
+\paragraph{Preprocessing.}
+HSI bands are resampled to 36 unified channels via spectral grouping and averaging, harmonizing the heterogeneous band counts across datasets.
+LiDAR data is zero-padded to 2 channels.
+Input patches of size $9{\times}9$ are extracted centered on each labeled pixel, with per-band standardization applied to HSI and separate standardization for LiDAR.
+No data augmentation is applied; all methods receive raw patches to ensure a fair comparison.
+The temperature parameter in the multi-centroid scorer (Eq.~\ref{eq:multi_centroid_score}) is set to $\tau{=}10$.
+
+\paragraph{Task structure.}
+Each domain is divided into 3 incremental tasks by splitting its class set:
+MUUFL [4, 4, 3], Trento [2, 2, 2], Houston [5, 5, 5].
+The default domain ordering is MUUFL$\to$Trento$\to$Houston (MTH), yielding $T{=}9$ sequential tasks and $C{=}32$ classes.
+Class ordering within each domain is randomized per seed.
+
+\paragraph{Evaluation metric.}
+We report \emph{final balanced accuracy}: the per-class mean accuracy (balanced accuracy) computed over all 32 classes at the final task.
+All results are averaged over 3 random seeds (0, 1, 2) with standard deviations reported.
+Task-wise accuracy evolution across all 9 tasks is shown in Fig.~\ref{fig:taskwise}.
+
+\subsection{Baseline Methods}
+\label{sec:baselines}
+
+We compare against 10 baseline methods plus two reference bounds, totaling 12 methods.
+Each baseline is implemented following its original paper's backbone architecture, optimizer, learning rate schedule, and hyperparameters.
+The \emph{only} adaptation made is the input interface (HSI band count + LiDAR channels) to accommodate the HSI+LiDAR data format.
+Each method uses its \emph{complete original pipeline}: iCaRL uses NME with herding exemplars, LUCIR uses cosine classification with weight imprinting, FOSTER uses boosting-compression, and our method uses SHINE normalization with multi-centroid prototype classification.
+SHINE is designed for the frozen-backbone prototype pipeline (Section~\ref{sec:shine}) and is part of the \methodname{} method, analogous to how herding exemplar selection is part of iCaRL's pipeline.
+The ablation (Table~\ref{tab:ablation}) decomposes the contributions: LoRA alone achieves $79.0\%$ and SHINE alone achieves $79.5\%$, while their combination yields $84.5\%$, demonstrating synergy rather than single-component dominance.
+
+Table~\ref{tab:baselines} summarizes the baseline configurations.
+
+\begin{table}[t]
+\centering
+\caption{Baseline methods. Each uses its original backbone, hyperparameters, and complete pipeline; only the input interface is adapted for HSI+LiDAR.}
+\label{tab:baselines}
+\small
+\begin{tabular}{clllc}
+\toprule
+\# & Method & Type & Backbone & Exmp. \\
+\midrule
+1 & Naive fine-tune & Lower & \backbonename{} & 0 \\
+2 & Frozen+proto & Lower & \backbonename{} & 0 \\
+3 & EWC~\cite{kirkpatrick2017ewc} & EF & ResNet-32 & 0 \\
+4 & LwF~\cite{li2017lwf} & EF & ResNet-32 & 0 \\
+5 & ACIL~\cite{zhuang2022acil} & EF & ResNet-32 & 0 \\
+6 & PASS++~\cite{zhu2025pass} & EF & ResNet-18 & 0 \\
+7 & iCaRL~\cite{rebuffi2017icarl} & EB & ResNet-32 & 20 \\
+8 & LUCIR~\cite{hou2019lucir} & EB & ResNet-32 & 20 \\
+9 & PODNet~\cite{douillard2020podnet} & EB & ResNet-32 & 20 \\
+10 & FOSTER~\cite{wang2022foster} & EB & ResNet-32 & 20 \\
+11 & Joint training & Upper & \backbonename{} & all \\
+\midrule
+--- & \textbf{Ours} & \textbf{BF} & \textbf{\backbonename{}+LoRA} & \textbf{0} \\
+\bottomrule
+\end{tabular}
+\vspace{-1mm}
+{\footnotesize EF$=$Exemplar-Free, EB$=$Exemplar-Based (20/class), BF$=$Buffer-Free (no exemplar buffer; re-accesses within-domain training data). Replay budget: $K = 20 \times 32 = 640$ total exemplars, class-balanced herding selection.}
+\end{table}
+
+\paragraph{Replay protocol.}
+All exemplar-based methods use a unified budget of $K{=}20$ exemplars per class ($20 \times 32 = 640$ total).
+After each task, exemplars are rebalanced via class-balanced shrinking ($m = K / |\mathcal{C}_{1:t}|$).
+Selection follows herding.
+Each method uses its original inference head: iCaRL$\to$NME, LUCIR$\to$cosine classifier, PODNet$\to$as specified, FOSTER$\to$default head.
+
+\paragraph{Hyperparameter protocol.}
+Task-level parameters (patch size $9{\times}9$, normalization, augmentation, class ordering, seeds) are unified across all methods.
+Method-level parameters (optimizer, scheduler, epochs, learning rate, loss weights, classifier) follow each method's original paper.
+If a ResNet-family method does not converge, we uniformly reduce the learning rate (e.g., $0.1 \to 0.01$) for that family---no per-method tuning is performed.
+
+\methodname{} hyperparameters: warm-up uses Adam with $\mathrm{lr}{=}10^{-3}$ for 30 epochs (spectral branch $0.1\times$); LoRA training uses Adam with $\mathrm{lr}{=}5{\times}10^{-4}$ for 50 epochs with cosine annealing.
+Loss weights: $\lambda_{\mathrm{proto}}{=}1.0$, $\lambda_{\mathrm{ortho}}{=}0.1$, $\lambda_{\mathrm{DKD}}{=}0.5$ (for all post-warmup tasks; the teacher is the previous domain's model snapshot).
+LoRA scaling factor $\alpha{=}1.0$; prototype centroids $K{=}2$; multi-centroid temperature $\tau{=}10$.
+
+\subsection{Main Results}
+\label{sec:main_results}
+
+Table~\ref{tab:main} presents the full comparison on the 9-task MTH benchmark.
+
+\input{figures/main_table}
+
+\paragraph{Buffer-free accuracy--storage trade-off.}
+Following standard CIL evaluation practice, each baseline uses its original backbone and hyperparameters as prescribed in its respective paper; only the input interface is adapted for HSI+LiDAR.
+Under this protocol, \methodname{} achieves $84.5\% \pm 0.9$ balanced accuracy without maintaining a replay buffer, while re-accessing within-domain training data for adapter fine-tuning and prototype recomputation.
+
+\paragraph{Backbone capacity discussion.}
+Our method uses the \backbonename{} backbone (3.07M params) while baselines use ResNet-32 (0.47M), so the raw accuracy gap partly reflects backbone capacity.
+This is a deliberate design choice, not an incidental advantage: the observation study (Section~\ref{sec:observation}) shows that independent-branch architectures like \backbonename{} enable the drift asymmetry that \methodname{} exploits, whereas ResNet-32 (a single-stream architecture) would not exhibit the structural prior that motivates our method.
+The backbone selection is thus \emph{part of the contribution}---our method requires a backbone with specific structural properties, not merely a larger one.
+We note that the efficiency advantage of \methodname{} lies specifically in rehearsal buffer elimination (${\sim}75\times$ less extra storage, zero exemplars), not in computational cost: Table~\ref{tab:efficiency} shows that \backbonename{} has higher inference latency than ResNet-32.
+
+\paragraph{Data access protocol.}
+\methodname{} does not maintain a replay buffer of raw training samples.
+After each task, it stores multi-centroid prototypes, SHINE statistics (per-domain mean/variance), and LoRA adapter weights---totaling $\sim$101\,KB vs.\ 7.5\,MB for replay methods.
+
+\methodname{} re-accesses within-domain training data at two points during the training pipeline:
+(1)~During \emph{LoRA training}, when the domain-conditioned reuse mechanism (DCR) encounters a returning domain, the LoRA adapter is fine-tuned on \emph{all seen classes from that domain}---not just the new task's classes. This within-domain rehearsal is essential for prototype--adapter alignment (an exemplar-free variant that restricts training to current-task data only degrades to $33.9\%$; see Section~\ref{sec:limitations}).
+(2)~After each task, prototypes, centroid sets, and SHINE statistics are \emph{recomputed} by re-extracting features from all seen training data through the current model.
+
+This within-domain data accessibility is a natural property of fixed-sensor remote sensing deployments, where historical observations from the same geographic site remain available.
+The key distinction from exemplar-based methods is \emph{storage}: \methodname{} stores no raw samples as part of the CIL pipeline (${\sim}75\times$ less extra storage), accessing the original training data in place rather than maintaining a separate buffer.
+
+\paragraph{Low forgetting.}
+\methodname{} achieves the lowest forgetting among non-joint methods ($8.7\%$), lower than iCaRL ($12.9\%$) and FOSTER ($14.8\%$), and drastically lower than catastrophic-forgetting methods ($>60\%$).
+The frozen spectral anchor preserves old-domain spectral signatures, and per-domain retention remains stable across domain transitions (Section~\ref{sec:analysis}).
+
+\paragraph{Knowledge accumulation.}
+The Gain column ($\Delta = \mathrm{T8} - \mathrm{T2} = +10.8$\,pp) shows that \methodname{} achieves the \emph{largest} knowledge accumulation among non-joint methods, accumulating substantially more than replay baselines (iCaRL $+7.6$, FOSTER $+2.4$).
+While replay methods also show positive gain, \methodname{} does so without maintaining a separate exemplar buffer, and PODNet ($-30.3$\,pp) actively degrades.
+
+\paragraph{Cross-domain degradation of single-domain CIL methods.}
+EWC, LwF, PASS, and naive fine-tuning all degrade to $\leq 15\%$ balanced accuracy, indicating that methods designed for single-domain CIL are insufficient for the cross-domain multimodal setting.
+Even with regularization (EWC) or distillation (LwF), the magnitude of cross-domain distributional shift exceeds what these mechanisms can compensate.
+
+\subsection{Ablation Study}
+\label{sec:ablation}
+
+Table~\ref{tab:ablation} presents a systematic ablation of \methodname{}'s components.
+
+\input{figures/ablation_table}
+
+\paragraph{SHINE and LoRA are complementary (\#2, \#5).}
+Removing SHINE reduces accuracy by $5.5$\,pp ($84.5\% \to 79.0\%$), while removing LoRA reduces it by $5.0$\,pp ($84.5\% \to 79.5\%$).
+Critically, \emph{neither component alone accounts for the full improvement}: removing both yields $70.1\%$ (frozen baseline), while the combined gain is $14.4$\,pp---demonstrating a \emph{synergistic interaction}.
+This synergy arises because SHINE addresses the \emph{distributional gap} between domains (mean/variance shift), while LoRA addresses the \emph{representational gap} (spatial feature drift).
+Without LoRA, SHINE can only normalize stale frozen features; without SHINE, adapted features from different domains remain misaligned for prototype matching.
+Notably, even without SHINE, LoRA alone ($79.0\%$) is competitive with the best replay method ($77.9\%$), confirming that spatial adaptation provides genuine value beyond normalization.
+
+\paragraph{Domain-conditioned reuse + prototype correction (\#3).}
+The ``w/o DCR'' ablation disables the full domain-conditioned pipeline: adapter reuse across same-domain tasks, domain-aware feature distillation ($\lambda_\mathrm{DKD}{=}0$), and prototype correction, reducing accuracy by $1.6$\,pp ($82.9\%$ vs.\ $84.5\%$).
+These components are architecturally coupled: adapter reuse determines which adapter state prototypes are computed against, and disabling reuse changes the teacher selection for DKD. Specifically, without reuse each task gets an independent adapter, eliminating the domain-level teacher relationship that DKD relies on. Isolating each factor individually would require redesigning the teacher selection logic; we therefore report the combined effect and note that the modest $1.6$\,pp contribution suggests none of the three sub-components dominates.
+Note that within-domain data access (Section~\ref{sec:main_results}) is maintained across all ablation configurations; this ablation isolates the algorithmic components of the DCR pipeline, not the data access protocol.
+
+\paragraph{Asymmetric rank allocation matters (\#4).}
+Table~\ref{tab:rank_allocation} compares asymmetric ($r_\mathrm{H}{=}4$, $r_\mathrm{L}{=}8$) versus symmetric ($6,6$) allocation at the same total rank budget ($R{=}12$).
+Our asymmetric allocation outperforms the symmetric baseline by $1.1$\,pp ($84.5\%$ vs.\ $83.4\%$), confirming that modality-aware rank allocation provides value.
+This is consistent with LiDAR being the sole carrier of elevation information with no spectral branch backup, requiring more adaptation directions despite comparable CKA drift magnitude.
+
+\input{figures/rank_allocation_table}
+
+\paragraph{Decoupled spatial adapters are necessary (\#5).}
+Sharing a single LoRA adapter between HSI-spatial and LiDAR-spatial branches (at HSI rank $r_0$) tests whether modality-specific adaptation is needed.
+Since HSI-spatial and LiDAR-spatial features capture fundamentally different physical properties (texture vs.\ elevation), a shared adapter cannot simultaneously address both drift patterns.
+
+\paragraph{Spatial adaptation is the right target (\#6).}
+Applying LoRA only to the spectral branch (with spatial branches frozen) provides a reverse validation of the core hypothesis.
+If the drift asymmetry insight is correct, adapting the already-stable spectral branch while leaving the drifting spatial branches frozen should \emph{degrade} performance---confirming that adaptation effort should target the spatial branches.
+
+\subsection{Analysis}
+\label{sec:analysis}
+
+\paragraph{Task-wise accuracy evolution.}
+Fig.~\ref{fig:taskwise} shows the Avg TAg progression across all 9 tasks.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/fig_taskwise.pdf}
+    \caption{Task-wise accuracy evolution on the MTH benchmark. \methodname{}'s advantage over other replay-free methods widens as new domains are introduced at tasks 3 and 6, confirming that the drift-aware adaptation mechanism is most valuable precisely when cross-domain forgetting is most severe.}
+    \label{fig:taskwise}
+\end{figure}
+
+As Fig.~\ref{fig:taskwise} shows, \methodname{}'s advantage over replay-free baselines widens as new domains are introduced at tasks 3 and 6, confirming that drift-aware spatial adaptation is most valuable at domain transitions where cross-domain forgetting is most severe.
+
+\paragraph{Classification maps.}
+Fig.~\ref{fig:classmaps} shows qualitative classification results across the three domains.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/fig_classmaps.pdf}
+    \caption{Classification maps on the three domains after the final task (task 8). Each column shows one domain; rows correspond to ground truth and predictions from selected methods. \methodname{} produces more spatially coherent predictions, particularly in the Houston domain where cross-domain forgetting is most severe.}
+    \label{fig:classmaps}
+\end{figure}
+
+\paragraph{Per-domain retention analysis.}
+Table~\ref{tab:main} reveals domain-specific retention patterns.
+On MUUFL (the first-learned domain), \methodname{} retains $76.0\%$ balanced accuracy after learning two subsequent domains, substantially above iCaRL ($68.9\%$) and FOSTER ($67.1\%$).
+On Houston (the last domain), \methodname{} achieves $87.3\%$---$6.6$\,pp above iCaRL ($80.7\%$)---demonstrating superior plasticity for new domains.
+This retention pattern is a direct consequence of the frozen spectral anchor: the anchor preserves old-domain discriminative spectral signatures while spatial LoRA adapters efficiently acquire new-domain spatial features.
+
+\paragraph{Domain tracking curves.}
+Fig.~\ref{fig:taskwise} (3 subplots by domain) shows how each domain's balanced accuracy evolves across all 9 tasks.
+\methodname{}'s MUUFL accuracy remains stable across domain transitions, while baselines show progressive degradation after domain switches.
+
+\paragraph{Domain ordering robustness.}
+To evaluate sensitivity to the order in which domains are presented, we run all 6 permutations of the 3 domains, each with 3 seeds (Table~\ref{tab:domain_order} and Fig.~\ref{fig:6order}).
+
+\input{figures/6order_table}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/fig_6order_robustness.pdf}
+    \caption{Domain ordering robustness. \methodname{} achieves competitive accuracy across orderings without maintaining a replay buffer. Dashed lines indicate 6-order means.}
+    \label{fig:6order}
+\end{figure}
+
+\methodname{} achieves $80.9\%$ averaged across all 6 orderings, outperforming iCaRL ($77.8\%$, $+3.1$\,pp) and FOSTER ($77.2\%$, $+3.7$\,pp) in 5 out of 6 orderings \emph{without maintaining an exemplar buffer}.
+Performance is highest when Houston is learned last (MTH: $84.5\%$, TMH: $84.6\%$), where warm-up occurs on the two larger domains (MUUFL: 51K samples, Trento: 29K) that provide richer training data before backbone freezing.
+Even in the worst-case ordering (MHT: $78.0\%$), \methodname{} remains at parity with replay baselines, confirming robustness across domain orderings.
+
+\paragraph{Rehearsal storage efficiency.}
+\methodname{}'s key deployment advantage is the elimination of exemplar buffer storage.
+Each LoRA adapter pair (HSI rank-4 + LiDAR rank-8) adds only $\sim$6K parameters per domain---$0.20\%$ of the frozen backbone.
+The total extra storage (prototypes + LoRA adapters + SHINE statistics) is $\sim$101\,KB---${\sim}75\times$ less than the $7.5$\,MB needed to store 640 exemplar patches for replay methods.
+Note that the S2CM backbone itself (3.07M parameters) is larger and slower than ResNet-32 (0.47M; see Table~\ref{tab:efficiency} in supplementary); the efficiency advantage is specifically in rehearsal buffer elimination.
+
+\paragraph{Limitations and discussion.}
+\label{sec:limitations}
+We acknowledge two primary limitations.
+\emph{(1)~Within-domain data accessibility.}
+\methodname{} requires access to within-domain training data for LoRA fine-tuning and prototype recomputation.
+A strictly exemplar-free variant that restricts each task to its own new-class data degrades catastrophically ($33.9\%$ vs.\ $84.5\%$), because LoRA adaptation on new classes alone causes prototype--adapter misalignment for old classes within the same domain.
+This confirms that within-domain data re-access is essential, not merely beneficial.
+In fixed-sensor remote sensing deployments, this assumption is naturally satisfied.
+\emph{(2)~Backbone coupling}---the method's effectiveness is tied to independent-branch architectures. However, this is by design: the observation study (Section~\ref{sec:observation}) provides a principled criterion for backbone selection, and the principled selection of backbone and adaptation strategy is itself a contribution.
+Regarding domain ordering, the comprehensive 6-ordering evaluation (Table~\ref{tab:domain_order}) confirms that \methodname{} outperforms replay baselines in 5 of 6 orderings without an exemplar buffer, though with larger variation ($\pm 2.7$\,pp) than baselines ($\pm 0.3$--$0.6$\,pp) due to sensitivity to warm-up domain size.

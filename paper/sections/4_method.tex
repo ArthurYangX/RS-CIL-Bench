@@ -1,0 +1,173 @@
+\section{Method: \methodname{}}
+\label{sec:method}
+
+We present \methodname{} (Cross-Modal Compensated Drift LoRA), a parameter-efficient buffer-free framework for cross-domain multimodal CIL.
+The method is designed around the structural prior identified in Section~\ref{sec:observation}: in independent-branch fusion architectures, the spectral branch is naturally stable across domains while spatial branches require adaptation.
+Fig.~\ref{fig:overview} illustrates the overall architecture.
+
+\input{figures/fig_framework}
+
+\subsection{\backbonename{} Backbone}
+\label{sec:backbone}
+
+\backbonename{} (Spectral-Spatial Contrastive Mamba) is a tri-branch multimodal backbone that processes HSI+LiDAR input through three feature streams:
+
+\begin{itemize}
+    \item \textbf{Spectral branch}: A 1D Mamba selective state-space model~\cite{gu2024mamba} processes per-pixel spectral vectors of the HSI input, capturing material absorption signatures via efficient long-sequence modeling. Output: $\fspec \in \R^{d}$.
+    \item \textbf{HSI-spatial branch}: After a modality-specific input projection, HSI patches are processed by a stack of 2D VSSBlocks (depthwise convolution + channel MLP with state-space mixing) that extract spatial texture patterns. Output: $\fhsi \in \R^{d}$.
+    \item \textbf{LiDAR-spatial branch}: LiDAR elevation/intensity maps pass through an independent input projection and then the \emph{same} VSSBlock stack in a Siamese configuration (shared spatial parameters, independent inputs). Output: $\flid \in \R^{d}$.
+\end{itemize}
+
+A lightweight cross-fusion module exchanges information between the two spatial streams after the final VSSBlock via residual cross-modal projections, before global average pooling produces the branch-level features.
+The three outputs are concatenated into $f = [\fspec;\, \fhsi;\, \flid] \in \R^{3d}$ for classification.
+The architecture uses $d{=}64$, 4 VSSBlocks per spatial branch, and 2 Mamba layers in the spectral branch.\footnote{All reported results use the Mamba~\cite{gu2024mamba} and VMamba VSSBlock implementations. The released code includes fallback paths to standard Transformer blocks when these dependencies are unavailable; fallback paths were not used for any reported experiment.}
+
+The key architectural property is \emph{spectral--spatial independence}: the spectral branch shares no parameters with the spatial processing pipeline.
+Section~\ref{sec:observation} shows that this separation preserves the drift asymmetry that \methodname{} exploits---the spectral branch naturally maintains stable representations while spatial branches absorb domain-specific variation, creating the structural prior that enables asymmetric adaptation.
+The two spatial branches share VSSBlock weights (Siamese), but after warm-up the backbone is frozen and each branch receives its own independent LoRA adapter (Section~\ref{sec:lora}), enabling modality-specific adaptation despite the shared backbone.
+
+\subsection{Phase 1: Warm-Up Training}
+\label{sec:warmup}
+
+During the first $W$ tasks (covering the initial geographic domain), the \backbonename{} backbone is fully trained to establish robust feature representations.
+Training uses cross-entropy loss computed from cosine-similarity logits against per-class prototypes, with a reduced learning rate for the spectral branch ($0.1\times$ the base rate) to encourage early stabilization of spectral representations.
+After the warm-up phase, the \emph{entire} backbone is frozen---including all three branches.
+The spectral branch, having learned domain-invariant absorption signatures, becomes the permanent stable anchor.
+
+The warm-up length $W$ is set to the number of tasks in the first domain (e.g., $W{=}3$ for MUUFL with 3 sub-tasks), ensuring complete initial-domain coverage before freezing.
+
+\subsection{Asymmetric LoRA Adaptation}
+\label{sec:lora}
+
+For each task $t \geq W$, the frozen backbone is adapted through low-rank updates applied \emph{only to the two spatial branches}, leaving the spectral anchor untouched.
+
+\paragraph{LoRA insertion.}
+After each VSSBlock in the spatial branches, a low-rank output adapter modifies the block's feature map:
+\begin{equation}
+    h' = h + \alpha \cdot W_{\mathrm{up}} W_{\mathrm{down}} h
+\label{eq:lora}
+\end{equation}
+where $h$ is the VSSBlock output, $W_{\mathrm{down}} \in \R^{r \times d}$ projects to a low-rank bottleneck, $W_{\mathrm{up}} \in \R^{d \times r}$ projects back (implemented as $1{\times}1$ convolutions for spatial feature maps), $r$ is the rank, and $\alpha{=}1.0$ is a fixed scaling factor.
+Although the two spatial branches share frozen VSSBlock weights, each branch has its own independent set of LoRA adapters, enabling modality-specific adaptation.
+
+\paragraph{Asymmetric rank allocation.}
+The two spatial branches receive different LoRA ranks:
+\begin{equation}
+    r_{\mathrm{HSI}} = r_0, \quad r_{\mathrm{LiDAR}} = 2 r_0
+\label{eq:rank}
+\end{equation}
+The LiDAR-spatial branch receives $2\times$ the rank because it requires a higher-dimensional adaptation subspace: as the sole carrier of elevation information with no spectral branch backup, LiDAR adaptation spans more diverse directions than HSI-spatial, whose information is partially redundant with the frozen spectral anchor.
+This is confirmed by the rank allocation comparison (Table~\ref{tab:rank_allocation}), which shows that our asymmetric allocation outperforms symmetric allocation at the same total rank budget.
+
+\paragraph{Domain-conditioned reuse.}
+Rather than allocating a separate adapter per task, we share adapters across tasks within the same geographic domain.
+Specifically, tasks from the same domain share a single adapter set.
+For the 9-task benchmark (3~domains, 3~tasks each), this yields 2 adapter sets for 6 post-warmup tasks, reducing parameter count by $3\times$ over per-task allocation while acting as an implicit domain-level regularizer.
+
+\paragraph{Domain-selective inference.}
+At test time, only the adapter corresponding to the query's domain is activated:
+\begin{equation}
+    h' = h + \alpha\, W_{\mathrm{up}}^{(d)} W_{\mathrm{down}}^{(d)}\, h
+\label{eq:domain_selective}
+\end{equation}
+where $d$ is the domain index of the test sample and $h$ is the frozen backbone feature.
+Each domain's adapter is calibrated for its own distributional characteristics; activating only the relevant adapter avoids interference from adapters trained on unrelated domains.
+During \emph{training}, when learning a new domain $k$, a fresh adapter is allocated and fine-tuned on the new domain's data; when learning additional tasks within the same domain, the existing domain adapter is unfrozen and continues training.
+During \emph{evaluation}, the domain identity is known because test sets are physically separate per geographic region (see SHINE discussion in Section~\ref{sec:shine}).
+
+\subsection{SHINE: Per-Domain Whitening Normalization}
+\label{sec:shine}
+
+Cross-domain prototype matching suffers from distributional misalignment: prototypes computed from one domain's training features may not be directly comparable to query features from another domain due to differences in feature statistics (mean, variance).
+SHINE addresses this by applying per-domain, per-branch whitening normalization at both prototype construction and inference time.
+
+\paragraph{Construction.}
+After training on each task, for each branch $b$ and each domain $d$, we compute the running mean $\mu_d^b$ and standard deviation $\sigma_d^b$ from the training features of that domain.
+Class prototypes are stored \emph{after} Z-score normalization:
+\begin{equation}
+    \bar{f}_b = \frac{f_b - \mu_d^b}{\sigma_d^b + \epsilon}
+\label{eq:shine_norm}
+\end{equation}
+where $d$ is the domain from which the features originate.
+When the sample count for a domain--branch pair is below a threshold ($n < 100$), the normalized features are blended with the original features using $\alpha = n/100$ to avoid unreliable statistics from small samples.
+
+\paragraph{Inference.}
+In our benchmark experiments, we use a \emph{domain-aware} mode: the query's domain identity is known because test sets are physically separate per domain, and the query is normalized with its domain's statistics.
+In open deployment where domain labels are unavailable, a \emph{domain-agnostic} extension could normalize the query using each candidate domain's statistics in turn and select the highest-scoring class across all domain--prototype pairs.
+We leave validation of this domain-agnostic mode to future work; the current evaluation uses domain-aware normalization throughout.
+
+\paragraph{Deployment protocol.}
+At training time, per-domain statistics $(\mu_d^b, \sigma_d^b)$ are computed from training features and stored alongside class prototypes (4.5\,KB for 3 domains $\times$ 3 branches $\times$ mean/std $\times$ $d{=}64$).
+This post-hoc normalization eliminates the first-order distributional gap (mean and variance shift) between domains without introducing any learnable parameters.
+SHINE is an integral component of the \methodname{} framework (analogous to herding selection in iCaRL) and is not applied to baselines.
+
+\subsection{DCR: Drift-Compensated Reconstruction}
+\label{sec:dcr}
+
+When spatial adapters are trained on a new domain, the spatial features of old-class prototypes become stale: they were computed with the previous adapter state, which no longer matches the current accumulated adapter configuration.
+DCR ensures that old-class prototypes remain aligned with the current accumulated adapter configuration.
+
+\paragraph{Principle.}
+After training the adapter for a new domain, old-class prototypes from the \emph{same} domain must reflect the updated adapter state.
+For each spatial-branch prototype $\mu_c^b$ ($b \in \{\mathrm{hsi}, \mathrm{lid}\}$) of a class $c$ belonging to domain $d$, the corrected prototype under domain-selective inference is:
+\begin{equation}
+    \hat{\mu}_c^b = (I + \alpha\, W_{\mathrm{up}}^{(d)} W_{\mathrm{down}}^{(d)})\, \mu_c^b
+\label{eq:dcr}
+\end{equation}
+This ensures prototypes and test features are aligned under the same domain adapter.
+Spectral-branch prototypes require no correction since the spectral branch is frozen.
+Lemma~1 proves this correction is exact when LoRA acts as a linear additive perturbation at the feature level; in practice, LoRA is inserted within multi-block branches where inter-block nonlinearities introduce a small approximation gap.
+
+\paragraph{Implementation.}
+In our experiments, we implement DCR implicitly: after each task, features for all seen classes are re-extracted through the current model (with the domain-specific adapter for each class's domain), and prototypes are recomputed from these updated features.
+For a strict deployment scenario without old-data access, Eq.~\eqref{eq:dcr} provides an approximate correction that can be applied directly to stored prototypes; the approximation quality depends on the magnitude of the LoRA update relative to the branch's nonlinearities.
+
+\paragraph{Ablation.}
+The ``w/o DCR pipeline'' ablation (Table~\ref{tab:ablation}) disables the full domain-conditioned pipeline: adapter reuse, domain-aware distillation, and prototype correction.
+Because these components are architecturally coupled, we report the combined effect ($-1.6$\,pp); see Section~\ref{sec:ablation} for discussion.
+
+\subsection{Multi-Centroid Prototype Classification}
+\label{sec:classifier}
+
+Each class is represented by $K{=}2$ centroids per branch, obtained by $k$-means clustering on the training features after each task.
+For a test sample $x$ with SHINE-normalized branch features $\{\bar{f}_b\}$, the per-branch score aggregates cosine similarities to the $K$ centroids via log-sum-exp:
+\begin{equation}
+    s_b(c \mid x) = \log \sum_{k=1}^{K} \pi_{c,k}^b \cdot \exp\!\left(\tau \cdot \cosim(\bar{f}_b,\; \bar{\mu}_{c,k}^b)\right)
+\label{eq:multi_centroid_score}
+\end{equation}
+where $\pi_{c,k}^b = n_{c,k}^b / n_c^b$ is the proportion of class-$c$ training samples assigned to centroid $k$ in branch $b$, $\bar{\mu}_{c,k}^b$ is the SHINE-normalized centroid, and $\tau$ is a temperature parameter.
+The final class score aggregates across branches:
+\begin{equation}
+    s(c \mid x) = \sum_{b \in \{\mathrm{spec}, \mathrm{hsi}, \mathrm{lid}\}} s_b(c \mid x)
+\label{eq:ncm}
+\end{equation}
+The predicted class is $\hat{y} = \argmax_{c \in \mathcal{C}_{1:t}} s(c \mid x)$.
+
+The multi-centroid representation captures intra-class heterogeneity (e.g., a land-cover class spanning two spectral sub-populations), improving discrimination over a single-centroid nearest-class-mean.
+This prototype-based classifier avoids the bias toward recent classes that plagues fully-connected heads in CIL settings and requires no additional learnable parameters beyond the stored centroids and mixing weights.
+
+\subsection{Overall Training and Inference}
+\label{sec:overall}
+
+\paragraph{Training objective.}
+The total loss for task $t \geq W$ combines cross-entropy, prototype consistency, orthogonal regularization, and domain-aware distillation:
+\begin{equation}
+    \mathcal{L} = \Lce + \lambda_{\mathrm{proto}} \cdot \mathcal{L}_{\mathrm{proto}} + \lambda_{\mathrm{ortho}} \cdot \mathcal{L}_{\mathrm{ortho}} + \lambda_{\mathrm{DKD}} \cdot \mathcal{L}_{\mathrm{DKD}}
+\label{eq:total_loss}
+\end{equation}
+where $\Lce$ is cross-entropy on the current task ($\lambda_{\mathrm{proto}}{=}1.0$, $\lambda_{\mathrm{ortho}}{=}0.1$).
+$\mathcal{L}_{\mathrm{proto}}$ enforces prototype consistency, $\mathcal{L}_{\mathrm{ortho}}$ regularizes LoRA adapter directions to preserve subspace diversity, and $\mathcal{L}_{\mathrm{DKD}}$ is a domain-aware feature distillation loss that minimizes the importance-weighted cosine distance between the current model's features and those of a teacher snapshot from the previous domain in the training sequence ($\lambda_{\mathrm{DKD}}{=}0.5$ for all post-warmup tasks).
+DCR prototype correction (Eq.~\ref{eq:dcr}) is applied \emph{after} training, not as a loss term.
+
+\paragraph{Inference pipeline.}
+Given a test sample $x$ from domain $d$:
+\begin{enumerate}
+    \item Extract $\fspec$, $\fhsi$, $\flid$ from the frozen backbone.
+    \item Apply domain-selective LoRA: activate only the adapters associated with domain $d$, rather than sequentially composing all adapters. This ensures each domain's spatial features are adapted by its own calibrated adapter, avoiding interference from adapters trained on unrelated domains.
+    \item Apply SHINE normalization (Eq.~\ref{eq:shine_norm}) using domain $d$'s statistics.
+    \item Compute multi-centroid scores (Eq.~\ref{eq:ncm}) against all stored prototypes.
+    \item Predict $\hat{y} = \argmax_c\, s(c \mid x)$.
+\end{enumerate}
+
+\paragraph{Parameter budget.}
+Each domain adapter pair adds ${\sim}6$K trainable parameters (${\sim}0.20\%$ of the frozen \backbonename{} backbone), with multi-centroid prototypes (2 centroids $\times$ 32 classes $\times$ 3 branches $\times$ 64 dims $\approx$ 48\,KB) and SHINE statistics requiring negligible additional storage---orders of magnitude below the cost of storing exemplar images.

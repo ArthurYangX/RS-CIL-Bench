@@ -1,0 +1,45 @@
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{hyperref}
+\usepackage[dvipsnames,table]{xcolor}
+\usepackage{cite}
+\usepackage{tabularx}
+\usepackage{subcaption}
+\usepackage{array}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, decorations.pathreplacing, calc}
+\usepackage{fontawesome5}
+
+\input{math_commands}
+
+\begin{document}
+
+\title{Cross-Modal Compensated Drift LoRA for Buffer-Free\\HSI+LiDAR Cross-Domain Class-Incremental Learning}
+
+\renewcommand{\methodname}{CMCD-LoRA}
+\renewcommand{\backbonename}{S\textsuperscript{2}CM}
+
+\author{Junchao Yang}
+
+\maketitle
+
+\input{sections/0_abstract}
+\input{sections/1_introduction}
+\input{sections/2_related_work}
+\input{sections/3_observation}
+\input{sections/4_method}
+\input{sections/5_experiments}
+\input{sections/6_conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\input{sections/A_appendix}
+
+\end{document}

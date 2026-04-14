@@ -1,0 +1,32 @@
+\begin{table}[t]
+\centering
+\caption{Efficiency comparison across CIL methods. ``Extra Storage'' denotes the additional \emph{deployment-time} storage beyond the backbone checkpoint (exemplars, prototypes, adapters, etc.). During training, our method additionally maintains domain-specific teacher snapshots (${\sim}12$\,MB per domain); these are discarded after training. All inference times measured on a single RTX 4090 with batch size 64.}
+\label{tab:efficiency}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\tabcolsep}{4pt}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l c r r r r r r}
+\toprule
+\textbf{Method} & \textbf{Backbone} & \textbf{Params} & \textbf{Train} & \textbf{Infer.} & \textbf{GPU Mem.} & \textbf{Extra Storage} & \textbf{Avg Acc} \\
+ & & (M) & (min) & (ms) & (MB) & & (\%) \\
+\midrule
+\multicolumn{8}{l}{\textit{Replay-Based (20 exemplars/class)}} \\
+iCaRL  & R32      & 0.47 & 17 & 3.7 & 11.9 & 7.51\,MB  & 77.9 \\
+LUCIR  & R32      & 0.47 & 17 & 3.7 & 11.9 & 7.51\,MB  & 75.9 \\
+FOSTER & R32      & 0.47 & 27 & 3.7 & 11.9 & 9.32\,MB  & 77.0 \\
+PODNet & R32      & 0.47 & 17 & 3.7 & 11.9 & 7.51\,MB  & 39.7 \\
+\midrule
+\multicolumn{8}{l}{\textit{Replay-Free}} \\
+EWC    & R32      & 0.47 & 17 & 3.7 & 11.9 & 0.47\,MB\textsuperscript{$\dagger$} & 13.5 \\
+PASS   & R18-CBAM & 11.2 & 12 & 2.5 & 62.8 & ---       & 11.2 \\
+ACIL   & R32      & 0.47 & 17 & 3.7 & 11.9 & ---       & 39.3 \\
+\midrule
+\rowcolor{red!5}
+\textbf{Ours} & \textbf{S2CM} & \textbf{3.07} & \textbf{${\sim}$54} & \textbf{34.1} & \textbf{71.9} & \textbf{101\,KB} & \textbf{84.5} \\
+\bottomrule
+\end{tabular}%
+}
+
+\vspace{2pt}
+{\footnotesize Params includes backbone + task-specific adapters. Extra Storage: replay methods store 640 raw patches ($38{\times}9{\times}9$, float32); FOSTER additionally stores the old-task model (1.8\,MB); Ours stores multi-centroid prototypes (48\,KB: $2 \times 32 \times 3 \times 64 \times 4$\,B for $K{=}2$ centroids) + mixing weights (0.8\,KB) + 2 LoRA adapter sets (48\,KB: 2 domains $\times$ $[r_H{=}4, r_L{=}8]$ $\times$ 4 VSSBlocks) + SHINE statistics (4.5\,KB: $3 \times 3 \times 2 \times 64 \times 4$\,B). \textsuperscript{$\dagger$}EWC stores a Fisher information matrix of equal size to the model. Infer.\,=\,forward pass time per batch of 64 samples. Ours achieves ${\sim}75\times$ less extra storage than replay methods.}
+\end{table}

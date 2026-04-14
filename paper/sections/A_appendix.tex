@@ -1,0 +1,57 @@
+\appendix[Supplementary Material]
+
+\subsection{Supplementary Ablation}
+\label{app:supp_ablation}
+
+Table~\ref{tab:supp_ablation} presents two additional ablation configurations that complement the main ablation study.
+
+\begin{table}[h]
+\centering
+\caption{Supplementary ablation (9 tasks, MTH, 3-seed mean$\pm$std).}
+\label{tab:supp_ablation}
+\begin{tabular}{lcc}
+\toprule
+Configuration & Avg TAg (\%) & $\Delta$ \\
+\midrule
+Full \methodname{}+SHINE & $84.5 \pm 0.9$ & --- \\
+\midrule
+w/o LoRA (frozen spatial) & $79.5 \pm 1.6$ & $-5.0$ \\
+FC head (replace prototype) & $52.4 \pm 10.0$ & $-32.1$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{w/o LoRA.}
+Completely removing LoRA adaptation (spatial branches remain frozen after warm-up) isolates the contribution of spatial adaptation itself.
+The gap between this configuration and the full method quantifies the value of LoRA-based plasticity on the spatial branches.
+
+\paragraph{FC head.}
+Replacing the cosine NCM classifier with a fully-connected (FC) head evaluates the importance of prototype-based classification in the CIL setting.
+FC heads are known to exhibit strong recency bias in incremental learning, favoring recent classes over old ones.
+
+\subsection{Efficiency Comparison}
+\label{app:efficiency}
+
+\input{figures/efficiency_table}
+
+\subsection{Per-Class Accuracy}
+\label{app:perclass}
+
+Detailed per-class accuracy after the final task (task 8) is provided in Table~\ref{tab:perclass} for \methodname{} and representative baselines.
+
+\input{figures/perclass_table}
+
+\input{sections/A2_analysis}
+
+\subsection{Note on 9-Task Drift Consistency}
+\label{app:9task_drift}
+
+The drift observation study (Section~\ref{sec:observation}) uses a simplified 3-task diagnostic protocol (one task per domain) to isolate cross-domain drift from within-domain class-incremental drift.
+Under the full 9-task protocol used in the main experiments, within-domain class-incremental steps are expected to introduce minor additional drift, but the cross-domain asymmetry pattern should remain consistent with the 3-task diagnostic, since the dominant drift source is the geographic domain shift rather than within-domain class addition.
+A systematic 9-task drift analysis is left for future work.
+
+\subsection{Confusion Matrices}
+\label{app:confusion}
+
+Confusion matrices reveal that \methodname{}'s errors are primarily within-domain misclassifications (e.g., confusing similar vegetation classes within MUUFL), rather than cross-domain confusion.
+This confirms that the frozen spectral anchor and SHINE normalization effectively prevent cross-domain feature collapse, while the remaining errors reflect genuine spectral/spatial similarity between land-cover types within the same geographic region.

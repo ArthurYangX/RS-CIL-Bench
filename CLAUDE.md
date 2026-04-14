@@ -2,7 +2,8 @@
 
 ## Remote Server
 
-- SSH: `ssh gpu-server`
+- SSH: `ssh -p 15494 root@connect.westc.seetacloud.com`
+- Password: `J1AeQodNS/uj`
 - GPU: 1x NVIDIA RTX 4090
 - CPU: 16 cores
 - Memory: 90GB

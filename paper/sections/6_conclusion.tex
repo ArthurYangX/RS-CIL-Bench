@@ -1,0 +1,22 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented \methodname{}, a buffer-free framework for cross-domain multimodal class-incremental learning on HSI+LiDAR data.
+Through systematic drift analysis across six fusion architectures, we identified an \emph{architecture-dependent drift asymmetry}---a structural prior of independent-branch designs where spatial features drift significantly more than spectral features.
+Exploiting this prior, \methodname{} freezes the spectral branch as a stable anchor and applies asymmetric LoRA adapters to the spatial branches with rank matched to each branch's effective adaptation dimensionality.
+Combined with SHINE domain whitening and DCR prototype correction, the framework achieves competitive accuracy ($84.5\%$) with replay methods on a 9-task cross-domain benchmark while requiring ${\sim}75\times$ less extra storage than exemplar buffers.
+\methodname{} leverages within-domain training data accessibility---a natural property of fixed-sensor deployments---for adapter fine-tuning and prototype recomputation, eliminating the need for a separate exemplar replay buffer.
+A strictly exemplar-free variant degrades catastrophically ($33.9\%$), confirming that within-domain data re-access is architecturally essential for prototype--adapter alignment in multi-block LoRA systems.
+
+\paragraph{Limitations.}
+The method's effectiveness relies on backbone designs with spectral--spatial separation---a deliberate choice validated by the observation study, but one that restricts generalization to architectures where spectral and spatial streams are not tightly coupled.
+The warm-up length is set heuristically; an automatic convergence criterion would improve robustness.
+The 6-ordering evaluation (Table~\ref{tab:domain_order}) confirms consistent advantages over replay baselines (winning 5 of 6 orderings), though with variation of $\pm 2.7$\,pp depending on the initial domain's data volume.
+Domain-adaptive warm-up strategies could further reduce this sensitivity.
+
+\paragraph{Reproducibility.}
+All experiment result artifacts (per-seed JSONs, per-class CSVs), figure generation scripts, and the complete paper source are included in the supplementary material.
+The experiment code, trained checkpoints, and instructions for reproducing results on the three HSI+LiDAR benchmarks will be released upon acceptance.
+
+\paragraph{Future work.}
+Promising extensions include: (i)~additional sensor modalities (SAR, multispectral) and longer task sequences; (ii)~domain-adaptive warm-up based on drift convergence criteria; and (iii)~applying the drift asymmetry insight to multi-temporal change detection where temporal modality stability varies.

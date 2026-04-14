@@ -189,6 +189,18 @@ The GMM orthogonal projection directly exploits the drift asymmetry:
 the spectral branch is frozen and requires no protection (its prototypes never change), so $\mathcal{L}_{\mathrm{GMM}}$ operates only on the spatial branches ($b \in \{\mathrm{hsi}, \mathrm{lid}\}$).
 The asymmetric rank allocation (Section~\ref{sec:lora}) means the LiDAR branch has more adaptation capacity ($r_{\mathrm{lid}} = 2r_0$), and correspondingly more protected directions from old-class centroids.
 
+\paragraph{Sufficient statistics as data proxies.}
+The key insight underlying $\mathcal{L}_{\mathrm{GMM}}$ is that \emph{stored class statistics serve as sufficient proxies for raw data access} when evaluating the impact of parameter updates on old classes.
+Traditional CIL methods require old-class samples to detect forgetting---either through replay (iCaRL) or feature re-extraction.
+Our approach replaces this data dependency at every level with compact intermediate quantities:
+\begin{itemize}
+    \item \textbf{Centroid positions} $\mu_{c,k}^b$ capture \emph{where} old classes reside in feature space, enabling direct computation of LoRA's perturbation $\delta = \Delta W \cdot \mu$ without running any sample through the model.
+    \item \textbf{Centroid variances} $\sigma_{c,k}^b$ capture \emph{which dimensions matter} for each class's discriminability, providing per-dimension importance weights that would otherwise require computing Fisher information over old-class data.
+    \item \textbf{SHINE domain statistics} $(\mu_d^b, \sigma_d^b)$ capture the domain-level distributional shift, enabling feature normalization without re-extracting old-domain features.
+\end{itemize}
+Together, these statistics---totaling ${\sim}100$\,KB---replace all old-class data access in the training pipeline.
+The approximation quality depends on the GMM faithfully representing old-class feature distributions; with $K{=}2$ components per class, the mixture captures both the location and bimodal structure of each class while remaining compact enough for real-time loss computation during training.
+
 \subsection{Exemplar-Free Training Protocol}
 \label{sec:ef_protocol}
 

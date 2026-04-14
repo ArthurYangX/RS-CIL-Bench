@@ -146,24 +146,123 @@ The predicted class is $\hat{y} = \argmax_{c \in \mathcal{C}_{1:t}} s(c \mid x)$
 The multi-centroid representation captures intra-class heterogeneity (e.g., a land-cover class spanning two spectral sub-populations), improving discrimination over a single-centroid nearest-class-mean.
 This prototype-based classifier avoids the bias toward recent classes that plagues fully-connected heads in CIL settings and requires no additional learnable parameters beyond the stored centroids and mixing weights.
 
+\subsection{GMM-Weighted Orthogonal Projection}
+\label{sec:gmm_ortho}
+
+A central challenge in exemplar-free CIL is training LoRA adapters on new-class data \emph{without} degrading old-class features.
+When the adapter for domain $d$ is trained on task $t$'s new classes, the low-rank update $\Delta W_b = \alpha\, W_{\mathrm{up}}^{(b)} W_{\mathrm{down}}^{(b)}$ modifies the spatial feature space.
+Without constraint, this update can displace old-class prototypes, causing catastrophic forgetting (a na\"ive exemplar-free variant degrades to $33.9\%$; see Section~\ref{sec:limitations}).
+
+We propose a \emph{GMM-weighted orthogonal projection} loss that constrains LoRA updates to preserve old-class prototype directions, using only stored GMM statistics---no old-class data access required.
+
+\paragraph{Formulation.}
+For each old class $c$ in the current domain with GMM centroids $\{\mu_{c,k}^b\}_{k=1}^{K}$ and per-dimension standard deviations $\{\sigma_{c,k}^b\}_{k=1}^{K}$ in spatial branch $b \in \{\mathrm{hsi}, \mathrm{lid}\}$, the LoRA perturbation applied to centroid $\mu_{c,k}^b$ is:
+\begin{equation}
+    \delta_{c,k}^b = \alpha\, W_{\mathrm{up}}^{(b)} W_{\mathrm{down}}^{(b)}\, \mu_{c,k}^b
+\label{eq:gmm_perturbation}
+\end{equation}
+This perturbation should be small, especially along dimensions where the class distribution is tight (low variance = high discriminability).
+The importance weight for dimension $j$ is inversely proportional to the variance:
+\begin{equation}
+    w_{c,k,j}^b = \frac{1}{(\sigma_{c,k,j}^b)^2 + \epsilon}
+\label{eq:importance_weight}
+\end{equation}
+The GMM orthogonal projection loss penalizes the importance-weighted perturbation across all old-class centroids:
+\begin{equation}
+    \mathcal{L}_{\mathrm{GMM}} = \frac{1}{|\mathcal{S}|} \sum_{c \in \mathcal{C}_{\mathrm{old}}^d} \sum_{k=1}^{K} \sum_{b} \sum_{j=1}^{d} w_{c,k,j}^b \cdot (\delta_{c,k,j}^b)^2
+\label{eq:gmm_loss}
+\end{equation}
+where $\mathcal{C}_{\mathrm{old}}^d$ denotes old classes in the current domain $d$, and $|\mathcal{S}|$ is the total number of centroid--branch terms for normalization.
+
+\paragraph{Geometric interpretation.}
+Each GMM centroid defines a direction in feature space that is important for classifying that class.
+The variance-weighted penalty ensures that LoRA updates are suppressed along \emph{discriminative} dimensions (where $\sigma^2$ is small and the class is tightly clustered) while allowing adaptation along \emph{non-discriminative} dimensions (where $\sigma^2$ is large and variation is tolerable).
+With $K{=}2$ centroids per class and $|\mathcal{C}_{\mathrm{old}}^d|$ old classes in the current domain, the protected subspace spans at most $2 \times |\mathcal{C}_{\mathrm{old}}^d|$ directions per branch in the $d$-dimensional feature space, leaving ample room for new-class adaptation.
+
+\paragraph{Why same-domain only.}
+Cross-domain old classes are already protected by a separate mechanism: domain-selective inference (Section~\ref{sec:lora}) ensures that each domain's test features pass through only that domain's adapter.
+Combined with frozen backbone BatchNorm (Section~\ref{sec:bn_freeze}), cross-domain features are \emph{exactly invariant} to new-domain LoRA training.
+Therefore, $\mathcal{L}_{\mathrm{GMM}}$ only needs to constrain same-domain old-class directions, keeping the protected subspace compact.
+
+\paragraph{Connection to drift asymmetry.}
+The GMM orthogonal projection directly exploits the drift asymmetry:
+the spectral branch is frozen and requires no protection (its prototypes never change), so $\mathcal{L}_{\mathrm{GMM}}$ operates only on the spatial branches ($b \in \{\mathrm{hsi}, \mathrm{lid}\}$).
+The asymmetric rank allocation (Section~\ref{sec:lora}) means the LiDAR branch has more adaptation capacity ($r_{\mathrm{lid}} = 2r_0$), and correspondingly more protected directions from old-class centroids.
+
+\subsection{Exemplar-Free Training Protocol}
+\label{sec:ef_protocol}
+
+Combining the above components, \methodname{} achieves true exemplar-free training: each task uses \emph{only its own new-class data}, with no access to any previous task's training samples.
+
+\paragraph{Backbone BatchNorm freezing.}
+\label{sec:bn_freeze}
+During LoRA training, the backbone is frozen (\texttt{requires\_grad=False}), but a subtle issue arises: calling \texttt{model.train()} switches BatchNorm layers to training mode, causing their running statistics to be updated by the current domain's data.
+This pollutes old-domain features at inference time, as BatchNorm running means and variances no longer reflect the old domain's distribution.
+We address this by keeping the backbone in evaluation mode during LoRA training:
+\begin{equation}
+    \texttt{model.train();\quad model.backbone.eval()}
+\label{eq:bn_freeze}
+\end{equation}
+This ensures BatchNorm running statistics remain frozen, making cross-domain feature extraction \emph{deterministic} regardless of which domain was last trained.
+We verified this empirically: after the fix, non-current-domain feature statistics are \emph{exactly unchanged} across all tasks (confirmed via A/B comparison).
+
+\paragraph{New-class-only LoRA training.}
+For each post-warmup task $t$ in domain $d$, the LoRA adapter is trained using only the new classes introduced by task $t$:
+\begin{equation}
+    \mathcal{D}_{\mathrm{train}}^{(t)} = \{(x_i, y_i) : y_i \in \mathcal{C}_t\}
+\end{equation}
+where $\mathcal{C}_t$ is the set of new classes in task $t$.
+Old-class preservation is handled entirely through the GMM orthogonal projection (Eq.~\ref{eq:gmm_loss}) and domain-aware feature distillation ($\mathcal{L}_{\mathrm{DKD}}$), neither of which requires old-class data.
+
+\paragraph{Current-domain-only prototype recomputation.}
+After training, prototypes and SHINE statistics are recomputed only for the \emph{current domain}.
+Cross-domain prototypes remain cached from their last computation and are still valid because:
+(i)~the backbone is frozen,
+(ii)~BatchNorm running statistics are frozen (Eq.~\ref{eq:bn_freeze}), and
+(iii)~domain-selective inference ensures cross-domain features pass through unchanged adapters.
+This eliminates all cross-domain data access during the training pipeline.
+
+\paragraph{Data access summary.}
+Table~\ref{tab:data_access} summarizes the data access pattern.
+At every stage, \methodname{} accesses only the \emph{current task's new-class training data}---the same data that every CIL method must see.
+No replay buffer is maintained, and no old-task data is accessed at any point.
+
+\begin{table}[t]
+\centering
+\caption{Data access per task. \methodname{} only accesses current-task new-class data at every stage.}
+\label{tab:data_access}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Stage} & \textbf{Data accessed} & \textbf{Old data?} \\
+\midrule
+LoRA training & Current task new classes & No \\
+GMM ortho loss & Stored GMM statistics & No \\
+DKD loss & Teacher model snapshot & No \\
+Prototype update & Current task new classes & No \\
+SHINE update & Current task new classes & No \\
+Cross-domain & Cached (unchanged) & No \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Overall Training and Inference}
 \label{sec:overall}
 
 \paragraph{Training objective.}
-The total loss for task $t \geq W$ combines cross-entropy, prototype consistency, orthogonal regularization, and domain-aware distillation:
+The total loss for task $t \geq W$ combines cross-entropy on new-class data with two regularization terms that protect old classes without requiring old-class data:
 \begin{equation}
-    \mathcal{L} = \Lce + \lambda_{\mathrm{proto}} \cdot \mathcal{L}_{\mathrm{proto}} + \lambda_{\mathrm{ortho}} \cdot \mathcal{L}_{\mathrm{ortho}} + \lambda_{\mathrm{DKD}} \cdot \mathcal{L}_{\mathrm{DKD}}
+    \mathcal{L} = \Lce + \lambda_{\mathrm{GMM}} \cdot \mathcal{L}_{\mathrm{GMM}} + \lambda_{\mathrm{DKD}} \cdot \mathcal{L}_{\mathrm{DKD}}
 \label{eq:total_loss}
 \end{equation}
-where $\Lce$ is cross-entropy on the current task ($\lambda_{\mathrm{proto}}{=}1.0$, $\lambda_{\mathrm{ortho}}{=}0.1$).
-$\mathcal{L}_{\mathrm{proto}}$ enforces prototype consistency, $\mathcal{L}_{\mathrm{ortho}}$ regularizes LoRA adapter directions to preserve subspace diversity, and $\mathcal{L}_{\mathrm{DKD}}$ is a domain-aware feature distillation loss that minimizes the importance-weighted cosine distance between the current model's features and those of a teacher snapshot from the previous domain in the training sequence ($\lambda_{\mathrm{DKD}}{=}0.5$ for all post-warmup tasks).
-DCR prototype correction (Eq.~\ref{eq:dcr}) is applied \emph{after} training, not as a loss term.
+where $\Lce$ is cross-entropy on the current task's new classes, $\mathcal{L}_{\mathrm{GMM}}$ is the GMM-weighted orthogonal projection loss (Eq.~\ref{eq:gmm_loss}) that constrains LoRA updates to preserve old-class prototype directions, and $\mathcal{L}_{\mathrm{DKD}}$ is a domain-aware feature distillation loss from a teacher snapshot of the previous domain.
+DCR prototype correction (Eq.~\ref{eq:dcr}) is applied \emph{after} training for classes whose data was accessed during the current task.
 
 \paragraph{Inference pipeline.}
 Given a test sample $x$ from domain $d$:
 \begin{enumerate}
-    \item Extract $\fspec$, $\fhsi$, $\flid$ from the frozen backbone.
-    \item Apply domain-selective LoRA: activate only the adapters associated with domain $d$, rather than sequentially composing all adapters. This ensures each domain's spatial features are adapted by its own calibrated adapter, avoiding interference from adapters trained on unrelated domains.
+    \item Extract $\fspec$, $\fhsi$, $\flid$ from the frozen backbone (BatchNorm in eval mode).
+    \item Apply domain-selective LoRA: activate only the adapters associated with domain $d$.
     \item Apply SHINE normalization (Eq.~\ref{eq:shine_norm}) using domain $d$'s statistics.
     \item Compute multi-centroid scores (Eq.~\ref{eq:ncm}) against all stored prototypes.
     \item Predict $\hat{y} = \argmax_c\, s(c \mid x)$.

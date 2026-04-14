@@ -121,14 +121,15 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, lambda s, f: (restore_file(), sys.exit(1)))
 
     try:
-        # Apply monkey patches
+        # Import and reload to pick up the Pilot A file change
+        import importlib
+        import cmcd_lora_experiment
+        importlib.reload(cmcd_lora_experiment)
+
+        # Apply monkey patches AFTER reload (reload resets class/function defs)
         apply()
 
         # Forward remaining args to cmcd_lora_experiment.main()
-        import importlib
-        import cmcd_lora_experiment
-        importlib.reload(cmcd_lora_experiment)  # Ensure patched file is loaded
-        # Remove freeze_patch.py from argv
         sys.argv = [target] + sys.argv[1:]
         cmcd_lora_experiment.main()
     finally:

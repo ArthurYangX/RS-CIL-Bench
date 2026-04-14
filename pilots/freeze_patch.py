@@ -52,10 +52,11 @@ def apply():
     def guarded_train(*args, **kwargs):
         model = args[0] if args else kwargs.get('model')
         if model is not None:
-            n_trainable = sum(1 for p in model.hsi_lora_bank.parameters() if p.requires_grad) + \
-                          sum(1 for p in model.lidar_lora_bank.parameters() if p.requires_grad)
+            # Check ALL trainable params, not just LoRA banks
+            # (covers drift_gate, structural_gate, spec_adapter, etc.)
+            n_trainable = sum(1 for p in model.parameters() if p.requires_grad)
             if n_trainable == 0:
-                print("    [First-Task Freeze] No trainable LoRA params, skipping training")
+                print("    [First-Task Freeze] No trainable params, skipping training")
                 return
         return orig_train(*args, **kwargs)
 
@@ -107,17 +108,28 @@ if __name__ == "__main__":
     else:
         print("[wrapper] WARNING: Could not apply Pilot A")
 
+    # Register restoration for SIGTERM and atexit (SIGKILL still can't be caught)
+    import signal
+    import atexit
+
+    def restore_file():
+        with open(target, "w") as f:
+            f.write(original_code)
+        print("[wrapper] Restored original cmcd_lora_experiment.py")
+
+    atexit.register(restore_file)
+    signal.signal(signal.SIGTERM, lambda s, f: (restore_file(), sys.exit(1)))
+
     try:
         # Apply monkey patches
         apply()
 
         # Forward remaining args to cmcd_lora_experiment.main()
+        import importlib
         import cmcd_lora_experiment
+        importlib.reload(cmcd_lora_experiment)  # Ensure patched file is loaded
         # Remove freeze_patch.py from argv
         sys.argv = [target] + sys.argv[1:]
         cmcd_lora_experiment.main()
     finally:
-        # Restore original file
-        with open(target, "w") as f:
-            f.write(original_code)
-        print("[wrapper] Restored original cmcd_lora_experiment.py")
+        restore_file()

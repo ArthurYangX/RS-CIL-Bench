@@ -8,21 +8,41 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 ## Core Narrative
 
 ### 1. Observation (动机)
-在 HSI+LiDAR 融合的跨域增量学习中，我们发现：
-- 输出的光谱表征和空间表征都会漂移
-- **空间表征漂移 ≈ 2× 光谱表征漂移**
-- LiDAR 空间分支漂移 > HSI 空间分支漂移
 
-→ 需要补充分支级 drift 可视化实验来支撑（spec vs hsi_spa vs lid_spa 的 cosine similarity 衰减曲线）
+**两层发现：**
+
+**第一层 — 漂移不对称现象：** 在独立双分支架构（spectral/spatial 无共享参数）中，跨域增量学习会导致 spatial drift 显著大于 spectral drift：
+
+| 架构类型 | Backbone | Drift Ratio | 分支独立性 |
+|:---|:---|:---|:---|
+| 独立双分支 | HCT (TGRS'23) | **5.66±0.99×** | spectral/spatial 完全独立 |
+| 独立三分支 | S2CM (Ours) | **4.35±2.41×** | Mamba spectral + VSSBlock spatial，无共享 |
+| 原生三分支 | MAHiDFNet (InfoFusion'22) | **1.57±0.49×** | 1D spectral + 2D spatial，独立 CNN |
+| 部分共享 | Coupled CNNs (TGRS'20) | 1.36±0.13× | conv2/conv3 跨分支共享（51%参数） |
+| 高度耦合 | S2ENet (TGRS'22) | 1.01±0.02× | spec 和 hsi_spa 共享全部卷积参数 |
+| 高度耦合 | FusAtNet (CVPR-W'20) | 0.60±0.12× | 共享 HFE，spectral attention 参数反而更重 |
+
+**第二层 — 架构依赖性：** 不对称性与三个架构因素正相关：
+1. **分支独立性**（最关键）：共享参数越少 → 不对称越强
+2. **参数容量不对称**：spectral 分支参数远少于 spatial → 分母小 → ratio 放大
+3. **特征提取点位置**：在耦合层之前提取 → 分支差异被抹平
+
+**关键 insight**:
+- 漂移不对称不是普遍规律，而是独立双分支架构的**结构先验**
+- 这种先验是可以**被利用的设计信号**：光谱天然稳定 → 锚点；空间需要适配 → LoRA
+- 与其均匀抑制所有漂移（EWC/LwF），不如**针对独立分支范式设计非均匀适配策略**
+- 这同时解释了为什么我们选择独立三分支 backbone（S2CM）：最大化可利用的不对称性
+
+→ 实验支撑：6 backbone × 3 seed 的 CKA 漂移曲线（主文 Fig. 1 + 架构因素分析）
 
 ### 2. Method (方法)
-基于漂移不对称观测，提出三个核心设计：
+基于"利用独立分支架构的漂移不对称先验"，提出三个设计：
 
-**A. 解耦 Backbone + 不对称 LoRA**
-- Mamba 框架下将 HSI 显式拆分为光谱/空间两路，LiDAR 作为独立空间分支
-- Warmup 后冻结 backbone，光谱分支作为稳定锚点
-- 对 HSI 空间和 LiDAR 空间分支引入 LoRA，不对称低秩配置（LiDAR rank > HSI rank）
-- 可塑性集中在漂移大的空间通道
+**A. 独立三分支 Backbone + 不对称 LoRA（利用结构先验 → 非均匀适配）**
+- 采用独立三分支 Mamba 架构（S2CM），**刻意最大化分支独立性**以放大可利用的漂移不对称
+- Warmup 后冻结 backbone，**光谱分支作为稳定锚点**（Observation 证实：独立 spectral branch drift 极小，ratio 4.35×）
+- 对 HSI 空间和 LiDAR 空间分支引入 LoRA，**不对称低秩配置**（LiDAR rank > HSI rank，容量分配匹配漂移程度）
+- 可塑性集中在漂移大的空间通道，而非均匀分配（EWC/LwF 的均匀正则化忽略了这一结构先验）
 
 **B. SHINE — Post-hoc Per-domain Whitening（我们提出的）**
 - 每个域单独计算各分支的均值/方差
@@ -52,7 +72,7 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 ---
 
 ## Contribution Summary
-1. 揭示了 HSI+LiDAR 跨域增量场景下"漂移不对称"现象（空间 >> 光谱），并据此设计了解耦-锚定-不对称适配框架
+1. 揭示了 HSI+LiDAR 跨域增量场景下**architecture-dependent 的漂移不对称现象**：独立双分支架构中 spatial drift 显著大于 spectral drift（HCT 5.7×, S2CM 4.4×），而耦合架构中不对称性消失。提出关键 insight：这种不对称是独立分支架构的**结构先验**，可被利用为非均匀适配的设计信号。据此设计**独立三分支 backbone + 不对称 LoRA** 框架
 2. 提出 SHINE（per-domain whitening）解决跨域 prototype 偏移
 3. 在无回放条件下与回放方法有竞争力（competitive），且 3-seed Avg TAg std 更小（稳定性证据：主表 mean±std + 补充表 Forgetting std）
 
@@ -61,7 +81,7 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 ## Key Decisions
 - **Ours = CMCD-LoRA (default) + SHINE**，报 83.7±0.9%
 - SHINE 是我们方法的标配组件，baseline 不加 SHINE
-- Mixtrain 变体 (84.0±0.7%) 放 supplementary
+- Mixtrain 变体 (84.0±0.7%) 放 supplementary，
 - 跨域设定作为实验设定，不强调为 benchmark
 
 ---
@@ -80,7 +100,7 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 |:---|:---|
 | Task 划分 | 3 tasks, dataset-as-task, MTH (MUUFL→Trento→Houston)（简化诊断实验，非主设定） |
 | CIL 策略 | Naive fine-tuning（无 replay、无 KD） |
-| Backbone | Coupled CNNs (TGRS'20), HCT (TGRS'23), MAHiDFNet (InfoFusion'22), GAMF (ESWA'24) |
+| Backbone | Coupled CNNs (TGRS'20), HCT (TGRS'23), MAHiDFNet (InfoFusion'22), FusAtNet (CVPR-W'20), S2ENet (TGRS'22), S2CM (Ours backbone) + 更多 |
 | 度量 | Linear CKA（主）+ Cosine Similarity（辅） |
 | 锚点 | Task 0 的 checkpoint |
 | Probe set | 三个域各一个测试集，每个 task 后全部测 |
@@ -92,9 +112,11 @@ Cross-Modal Compensated Drift LoRA for Exemplar-Free HSI+LiDAR Cross-Domain Clas
 | Backbone | 光谱特征 | HSI 空间特征 | LiDAR 空间特征 |
 |:---|:---|:---|:---|
 | Coupled CNNs | HSI stream 浅层 band-mixing conv | HSI stream 深层 patch conv | LiDAR stream 输出 |
-| HCT | Transformer token 输出 | CNN 特征金字塔输出 | LiDAR 分支 CNN 输出 |
-| MAHiDFNet | 原生 spectral branch | 原生 spatial branch | 原生 LiDAR branch |
-| GAMF | 光谱节点嵌入 | 空间邻域嵌入 | LiDAR 结构嵌入 |
+| HCT | Conv3D 后 GAP（光谱维度处理） | Fusion 后 HSI CLS token | Fusion 后 LiDAR CLS token |
+| MAHiDFNet | 中心像素 1D conv（纯光谱） | HSI 2D CNN + PAM | LiDAR 2D CNN + PAM |
+| FusAtNet | 光谱 self-attention 输出 | LiDAR-guided 空间 cross-attention | LiDAR CNN 分支 |
+| S2ENet | SEEM 模块前光谱特征 | SAEM 模块前空间特征 | LiDAR 分支特征 |
+| S2CM (Ours) | Mamba SSM 光谱分支（纯光谱，无空间） | VSSBlocks HSI 空间分支 | VSSBlocks LiDAR 空间分支 |
 
 ### 可视化
 - 主图：Line plot, x=Task, y=1-CKA (drift), 3条线(spec/hsi_spa/lid_spa), 4个backbone作subplot
@@ -276,8 +298,8 @@ runs/
 
 | Contribution | 主要证据 | 位置 |
 |:---|:---|:---|
-| C1: 漂移不对称现象 | Observation 实验：4 backbone × 3 seed 的 CKA 漂移曲线 | 主文 Fig. 1 |
-| C1: 解耦+不对称适配 | Ablation: Symmetric LoRA / Shared adapter / Spectral LoRA | 主文 Ablation Table |
+| C1: architecture-dependent 漂移不对称 | Observation：6 backbone × 3 seed CKA 曲线 + 架构因素分析（独立性/参数容量/耦合度） | 主文 Fig. 1 |
+| C1: 利用结构先验的非均匀适配 | Ablation: Symmetric LoRA / Shared adapter / Spectral LoRA（验证非均匀优于均匀） | 主文 Ablation Table |
 | C2: SHINE 域对齐 | Ablation: w/o SHINE | 主文 Ablation Table |
 | C3: 无回放竞争力 | 主表: 12 方法对比 | 主文 Main Table |
 | 补充: DCR 贡献 | Ablation: w/o DCR | 主文 Ablation Table |
@@ -292,7 +314,7 @@ runs/
 ### 主文
 | 图/表 | 内容 | 数据来源 |
 |:---|:---|:---|
-| Fig. 1 | Drift observation: 4 backbone 的 CKA 漂移曲线 (spec/hsi_spa/lid_spa) | drift observation 实验 |
+| Fig. 1 | Drift observation: 6 backbone 的 CKA 漂移曲线 (spec/hsi_spa/lid_spa) + drift ratio vs 分支独立性的关系 | drift observation 实验 |
 | Fig. 2 | 方法框架图 | 手绘/AI 绘图 |
 | Fig. 3 | Classification maps: GT + Ours + 2-3 代表性 baseline，每 domain 一列 | predictions parquet |
 | Fig. 4 | Task-wise accuracy 演化曲线 (Ours vs baselines) | task_metrics.csv |

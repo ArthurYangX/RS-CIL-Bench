@@ -2,8 +2,8 @@
 
 ## Remote Server
 
-- SSH: `ssh -p 15494 root@connect.westc.seetacloud.com`
-- Password: `J1AeQodNS/uj`
+- SSH: `ssh -p <PORT> root@connect.westc.seetacloud.com`
+- Password: (see AutoDL console, changes per session)
 - GPU: 1x NVIDIA RTX 4090
 - CPU: 16 cores
 - Memory: 90GB

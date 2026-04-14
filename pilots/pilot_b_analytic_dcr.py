@@ -43,19 +43,31 @@ def analytic_dcr_correction(
     if not domain_classes:
         return
 
-    # Get the domain's adapter key
+    # Get the domain's adapter via domain task IDs (works for both
+    # DomainConditionedLoRABank and base TaskLoRABank)
     hsi_bank = model.hsi_lora_bank
     lid_bank = model.lidar_lora_bank
 
     # Find which adapter this domain uses
-    hsi_adapter_key = None
-    lid_adapter_key = None
-    if hasattr(hsi_bank, 'domain_to_adapter'):
-        hsi_adapter_key = hsi_bank.domain_to_adapter.get(domain_name)
-        lid_adapter_key = lid_bank.domain_to_adapter.get(domain_name)
-
-    if hsi_adapter_key is None or lid_adapter_key is None:
+    domain_task_ids = model.get_domain_task_ids(domain_name) if hasattr(model, 'get_domain_task_ids') else []
+    if not domain_task_ids:
         # No adapter for this domain (e.g., warmup domain) — no correction needed
+        print(f"    [DCR] Skipping analytic correction for '{domain_name}' (no adapters)")
+        return
+
+    # Resolve adapter keys: with DCR, same-domain tasks map to one adapter
+    def _resolve_adapter_key(bank, task_ids):
+        if hasattr(bank, 'task_to_adapter'):
+            keys = set(bank.task_to_adapter.get(str(t), str(t)) for t in task_ids)
+        else:
+            keys = set(str(t) for t in task_ids if str(t) in bank.task_loras)
+        return keys
+
+    hsi_adapter_keys = _resolve_adapter_key(hsi_bank, domain_task_ids)
+    lid_adapter_keys = _resolve_adapter_key(lid_bank, domain_task_ids)
+
+    if not hsi_adapter_keys or not lid_adapter_keys:
+        print(f"    [DCR] No LoRA adapters found for '{domain_name}' — skipping correction")
         return
 
     # Build the composite transformation matrix for each branch
@@ -66,27 +78,36 @@ def analytic_dcr_correction(
     # After GAP, the effect on the pooled vector is the same as the per-pixel
     # linear transformation (since 1x1 conv is equivalent to per-pixel linear).
 
-    def build_transform_matrix(lora_bank, adapter_key, dim):
-        """Build the composite linear transform from multi-block LoRA."""
-        T = torch.eye(dim, device=device)
-        if adapter_key not in lora_bank.task_loras:
-            return T
-        loras = lora_bank.task_loras[adapter_key]
-        for block_idx in range(len(loras)):
-            lora = loras[block_idx]
-            if lora.rank <= 0:
+    def build_transform_matrix(lora_bank, adapter_keys):
+        """Build the composite linear transform from multi-block LoRA.
+        Infers dim from the LoRA weights (no hardcoded dimension)."""
+        dim = None
+        # Compose transforms for each unique adapter (deduped for DCR reuse)
+        T = None
+        for akey in sorted(adapter_keys):
+            if akey not in lora_bank.task_loras:
                 continue
-            D = lora.get_down_matrix(detach=True).to(device)  # (rank, dim)
-            U = lora.get_up_matrix(detach=True).to(device)    # (dim, rank)
-            alpha = lora.scale
-            # (I + alpha * U @ D)
-            block_T = torch.eye(dim, device=device) + alpha * (U @ D)
-            T = block_T @ T  # sequential composition
+            loras = lora_bank.task_loras[akey]
+            for block_idx in range(len(loras)):
+                lora = loras[block_idx]
+                if lora.rank <= 0:
+                    continue
+                D = lora.get_down_matrix(detach=True).to(device)  # (rank, dim)
+                U = lora.get_up_matrix(detach=True).to(device)    # (dim, rank)
+                if dim is None:
+                    dim = D.shape[1]
+                    T = torch.eye(dim, device=device)
+                alpha = lora.scale
+                block_T = torch.eye(dim, device=device) + alpha * (U @ D)
+                T = block_T @ T  # sequential composition
+        if T is None:
+            # Fallback: infer dim from bank
+            dim = lora_bank.dim if hasattr(lora_bank, 'dim') else 64
+            T = torch.eye(dim, device=device)
         return T
 
-    dim = 64  # feature dimension per branch
-    T_hsi = build_transform_matrix(hsi_bank, hsi_adapter_key, dim)
-    T_lid = build_transform_matrix(lid_bank, lid_adapter_key, dim)
+    T_hsi = build_transform_matrix(hsi_bank, hsi_adapter_keys)
+    T_lid = build_transform_matrix(lid_bank, lid_adapter_keys)
 
     # Apply correction to each class's prototype
     for c in domain_classes:
@@ -137,51 +158,57 @@ def apply_pilot_b(
     """
     from torch.utils.data import DataLoader
 
-    # Step 1: Analytic DCR correction for current domain prototypes
-    analytic_dcr_correction(
-        prototype_store,
-        anchor_prototype_store,
-        model,
-        ds_name,
-        class_to_domain,
-        seen_classes,
-        device,
-    )
+    # Two modes:
+    #   pure_analytic=True:  Eq.6 only, zero data access (strictest test)
+    #   pure_analytic=False: Eq.6 for cross-domain, re-extract current domain
+    #                        (more accurate, still eliminates cross-domain access)
+    pure_analytic = True  # Toggle for experiment comparison
 
-    # Step 2: Re-extract current domain for SHINE stats only
-    # (SHINE needs actual feature statistics, not corrected prototypes)
-    ds_cls_seen = [c for c in seen_classes if class_to_domain.get(c) == ds_name]
-    if ds_cls_seen:
-        from anchor_lora_experiment import (
-            subset_by_classes, extract_features, compute_domain_stats, BRANCHES
+    if pure_analytic:
+        # Step 1 ONLY: Analytic DCR correction, no data access at all
+        analytic_dcr_correction(
+            prototype_store,
+            anchor_prototype_store,
+            model,
+            ds_name,
+            class_to_domain,
+            seen_classes,
+            device,
         )
-        ds_subset = subset_by_classes(train_padded[ds_name], set(ds_cls_seen))
-        if ds_subset is not None:
-            ds_loader = DataLoader(
-                ds_subset, batch_size=eval_batch_size,
-                shuffle=False, drop_last=False
+        # SHINE stats: keep previous values (no update without data)
+        # This tests pure Eq.6 — the strictest exemplar-free mode
+    else:
+        # Step 1: Re-extract current domain for prototypes + SHINE stats
+        # (more accurate than Eq.6 for multi-block LoRA, but needs domain data)
+        ds_cls_seen = [c for c in seen_classes if class_to_domain.get(c) == ds_name]
+        if ds_cls_seen:
+            from anchor_lora_experiment import (
+                subset_by_classes, extract_features, compute_domain_stats, BRANCHES
             )
-            ds_task_ids = (
-                model.get_domain_task_ids(ds_name)
-                if domain_selective else None
-            )
-            ds_feats, ds_labels = extract_features(
-                model, ds_loader, device, active_task_ids=ds_task_ids
-            )
-            domain_stats[ds_name] = compute_domain_stats(
-                ds_feats, ds_labels, set(ds_cls_seen)
-            )
-
-            # ALSO update current-domain prototypes from real features
-            # (more accurate than Eq.6 for multi-block LoRA)
-            for c in ds_cls_seen:
-                mask_c = ds_labels == c
-                if mask_c.sum() > 0:
-                    class_feats = {
-                        b: ds_feats[b][mask_c]
-                        for b in BRANCHES if ds_feats[b] is not None
-                    }
-                    prototype_store.update(c, class_feats)
+            ds_subset = subset_by_classes(train_padded[ds_name], set(ds_cls_seen))
+            if ds_subset is not None:
+                ds_loader = DataLoader(
+                    ds_subset, batch_size=eval_batch_size,
+                    shuffle=False, drop_last=False
+                )
+                ds_task_ids = (
+                    model.get_domain_task_ids(ds_name)
+                    if domain_selective else None
+                )
+                ds_feats, ds_labels = extract_features(
+                    model, ds_loader, device, active_task_ids=ds_task_ids
+                )
+                domain_stats[ds_name] = compute_domain_stats(
+                    ds_feats, ds_labels, set(ds_cls_seen)
+                )
+                for c in ds_cls_seen:
+                    mask_c = ds_labels == c
+                    if mask_c.sum() > 0:
+                        class_feats = {
+                            b: ds_feats[b][mask_c]
+                            for b in BRANCHES if ds_feats[b] is not None
+                        }
+                        prototype_store.update(c, class_feats)
 
     # Step 3: Cross-domain — do nothing (prototypes and stats cached from before)
 

@@ -62,11 +62,15 @@ class FeatureBufferDataset(Dataset):
     def _build(self):
         """Flatten into tensors for DataLoader."""
         all_spec, all_hsi, all_lid, all_labels = [], [], [], []
+        assert self.features, "Feature buffer is empty — add classes before building"
         for c, fd in self.features.items():
-            n = fd.get("spec", fd.get("hsi_spa")).shape[0]
-            all_spec.append(fd.get("spec", torch.zeros(n, 64)))
-            all_hsi.append(fd.get("hsi_spa", torch.zeros(n, 64)))
-            all_lid.append(fd.get("lid_spa", torch.zeros(n, 64)))
+            # All branches must be present (enforced by extract_and_store_features)
+            assert all(b in fd for b in ("spec", "hsi_spa", "lid_spa")), \
+                f"Class {c} missing branches: {set(('spec','hsi_spa','lid_spa')) - set(fd.keys())}"
+            n = fd["spec"].shape[0]
+            all_spec.append(fd["spec"])
+            all_hsi.append(fd["hsi_spa"])
+            all_lid.append(fd["lid_spa"])
             all_labels.extend([c] * n)
         self._all_feats = {
             "spec": torch.cat(all_spec, 0),

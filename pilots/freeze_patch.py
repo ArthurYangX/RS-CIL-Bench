@@ -74,19 +74,55 @@ def apply():
 
 
 def apply_pilot_a_inline(code_string):
-    """Apply Pilot A via string replacement (safe, single change)."""
-    old = "        for ds in dataset_order:\n            ds_cls_seen = [c for c in seen_classes if class_to_domain.get(c) == ds]"
-    new = ("        # [PILOT A] Only recompute current domain\n"
-           "        for ds in [ds_name]:\n"
-           "            ds_cls_seen = [c for c in seen_classes if class_to_domain.get(c) == ds]")
-    marker = "# EVALUATION (same structure as anchor_lora_experiment)"
-    idx = code_string.find(marker)
+    """Apply Pilot A via string replacement.
+
+    Three changes:
+    1. Initialize domain_stats before the task loop (persist across tasks)
+    2. Don't reset domain_stats to empty each task
+    3. Loop only over current domain for feature extraction
+    """
+    # Change 1: Add persistent domain_stats initialization before task loop
+    loop_marker = "    for task_idx, (ds_name, cls_list) in enumerate(task_layout):"
+    pos_loop_start = code_string.find(loop_marker)
+    if pos_loop_start < 0:
+        return code_string, False
+    init_line = ("    # [PILOT A] Persistent domain stats across tasks\n"
+                 "    domain_stats = {}\n"
+                 "    baseline_domain_stats = {}\n\n"
+                 + loop_marker)
+    code_string = code_string[:pos_loop_start] + init_line + code_string[pos_loop_start + len(loop_marker):]
+
+    # Change 2: Remove per-task reset of domain_stats
+    eval_marker = "# EVALUATION (same structure as anchor_lora_experiment)"
+    idx = code_string.find(eval_marker)
     if idx < 0:
         return code_string, False
-    pos = code_string.find(old, idx)
-    if pos < 0:
+
+    old_reset = ("        lora_train_feats = {}\n"
+                 "        nolora_train_feats = {}\n"
+                 "        domain_stats = {}\n"
+                 "        baseline_domain_stats = {}")
+    new_reset = ("        lora_train_feats = {}\n"
+                 "        nolora_train_feats = {}\n"
+                 "        # [PILOT A] domain_stats persists — only current domain updated below")
+
+    pos_reset = code_string.find(old_reset, idx)
+    if pos_reset < 0:
         return code_string, False
-    return code_string[:pos] + new + code_string[pos + len(old):], True
+    code_string = code_string[:pos_reset] + new_reset + code_string[pos_reset + len(old_reset):]
+
+    # Change 3: Loop only over current domain
+    old_loop = "        for ds in dataset_order:\n            ds_cls_seen = [c for c in seen_classes if class_to_domain.get(c) == ds]"
+    idx = code_string.find(eval_marker)
+    pos_loop = code_string.find(old_loop, idx)
+    if pos_loop < 0:
+        return code_string, False
+    new_loop = ("        # [PILOT A] Only recompute current domain\n"
+                "        for ds in [ds_name]:\n"
+                "            ds_cls_seen = [c for c in seen_classes if class_to_domain.get(c) == ds]")
+    code_string = code_string[:pos_loop] + new_loop + code_string[pos_loop + len(old_loop):]
+
+    return code_string, True
 
 
 if __name__ == "__main__":

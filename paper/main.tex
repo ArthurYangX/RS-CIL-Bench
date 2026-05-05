@@ -12,18 +12,19 @@
 \usepackage{tabularx}
 \usepackage{subcaption}
 \usepackage{array}
+\usepackage{makecell}
 \usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, decorations.pathreplacing, calc}
+\usetikzlibrary{positioning, arrows.meta, decorations.pathreplacing, calc, fit, shapes.geometric}
 \usepackage{fontawesome5}
 
 \input{math_commands}
 
 \begin{document}
 
-\title{Cross-Modal Compensated Drift LoRA for Buffer-Free\\HSI+LiDAR Cross-Domain Class-Incremental Learning}
+\title{SpecAnchor: Spectral Anchor Routing for Cross-Domain Class-Incremental Learning with Hyperspectral and LiDAR Data}
 
-\renewcommand{\methodname}{CMCD-LoRA}
-\renewcommand{\backbonename}{S\textsuperscript{2}CM}
+\renewcommand{\methodname}{SpecAnchor}
+\renewcommand{\backbonename}{SpectralAnchorNet}
 
 \author{Junchao Yang}
 
@@ -32,14 +33,15 @@
 \input{sections/0_abstract}
 \input{sections/1_introduction}
 \input{sections/2_related_work}
-\input{sections/3_observation}
+% sections/3_observation.tex is intentionally excluded: its content is folded
+% into the Method motivation to front-load the proposed framework.
 \input{sections/4_method}
 \input{sections/5_experiments}
 \input{sections/6_conclusion}
 
-\bibliographystyle{IEEEtran}
-\bibliography{references}
-
 \input{sections/A_appendix}
 
-\end{document}
+\bibliographystyle{IEEEtran}
+\bibliography{references}   
+
+\end{document}  

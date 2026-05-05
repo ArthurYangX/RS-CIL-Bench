@@ -1,42 +1,50 @@
 \section{Introduction}
 \label{sec:intro}
 
-Automated land-cover classification from co-registered hyperspectral imagery (HSI) and light detection and ranging (LiDAR) data underpins precision agriculture, urban planning, and environmental monitoring~\cite{hong2022multimodal}.
-In practice, such systems must be deployed across geographically diverse regions and updated as new land-cover categories emerge---without the luxury of retraining from scratch on accumulated data.
-Class-incremental learning (CIL)~\cite{rebuffi2017icarl} provides a framework for sequential adaptation, yet existing CIL methods face three compounding challenges in the remote sensing context.
+\IEEEPARstart{M}{ultimodal} classification with hyperspectral imagery (HSI) and LiDAR data plays an important role in remote sensing applications such as urban planning, forest monitoring, and geological mapping.
+HSI provides dense spectral measurements for material discrimination, whereas LiDAR contributes height and structural cues that help distinguish spectrally similar land-cover classes, making the two modalities complementary~\cite{hong2022multimodal}.
+Building on this complementarity, recent HSI-LiDAR fusion networks have achieved strong performance in multimodal remote sensing classification with feature-level and decision-level fusion strategies~\cite{hang2020coupled,fang2022s2enet,li2022mahidfnet}.
 
-\textbf{First, cross-domain shift.}
-Unlike standard CIL benchmarks that draw all tasks from a single distribution, remote sensing CIL must contend with distribution shifts caused by differences in atmospheric conditions, sensor configurations, spatial resolution, and land-cover composition across geographic domains.
-\textbf{Second, multimodal heterogeneity.}
-HSI and LiDAR capture fundamentally different physical properties---material spectral reflectance versus surface elevation---and their feature representations respond to domain shift in markedly different ways.
-\textbf{Third, storage efficiency.}
-The sheer volume of remote sensing data makes maintaining large exemplar buffers impractical, demanding storage-efficient solutions that minimize the additional memory footprint beyond the model itself.
+With the rapid growth of remote sensing data and the increasing diversity of sensing platforms, land-cover observations accumulate over time across new regions, sensors, and acquisition conditions, giving rise to a lifelong learning scenario in which both the label space and the data domain evolve after initial deployment.
+Continual learning studies how models can learn from sequentially arriving data while retaining knowledge acquired from previous tasks~\cite{delange2021continualsurvey,wang2024continualsurvey}.
+Typical continual learning settings~\cite{vandeven2022three} include class-incremental learning (CIL), where new categories arrive over time and the model predicts over all classes seen so far, typically within a shared data domain~\cite{rebuffi2017icarl,hou2019lucir}; domain-incremental learning (DIL), where the input distribution shifts across tasks while the label space and task structure remain unchanged~\cite{wang2024pina}; and task-incremental learning (TIL), where the stream is partitioned into tasks and the task identity is provided at inference~\cite{serra2018hat}.
+This paper focuses on cross-domain class-incremental learning (CDCIL), where class-incremental label growth and domain-incremental distribution shift are coupled within a single task stream, as illustrated in Fig.~\ref{fig:cdcil_setting}.
+  
+\begin{figure*}[t!]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig1/fig1.pdf}
+  \caption{\textbf{Cross-domain class-incremental learning setting on HSI and LiDAR data.}
+  The model is trained sequentially on $9$ tasks across three sensors (MUUFL, Trento, and Houston 2013), with the class set accumulating across tasks ($4 \to 32$ classes total). Each task introduces a disjoint subset of land-cover classes; the cumulative class set after task $t$ is denoted ``Class set $t$''.}
+  \label{fig:cdcil_setting}
+\end{figure*}
 
-No prior work simultaneously addresses all three challenges.
-Existing HSI CIL methods~\cite{deng2024dcprn,xu2025crossacl} operate on single datasets with homogeneous domains.
-Cross-domain HSI classification~\cite{hong2022multimodal} does not consider incremental class arrival.
-Storage-efficient CIL methods~\cite{zhuang2022acil,zhu2025pass} are designed for natural-image benchmarks and do not handle multimodal inputs or cross-domain shifts.
+CDCIL inherits the core difficulties of both CIL and DIL, but their coupling creates new challenges that neither setting addresses in isolation.
+As shown in Fig.~\ref{fig:cdcil_setting}, each domain is divided into a sequence of class-incremental tasks, where every task introduces a subset of new land-cover classes and the cumulative label space grows within that domain.
+After the tasks of one domain are completed, the stream moves to a different sensor and location; changes in wavelength range, band count, and ground sample distance (GSD) shift the input distribution while class accumulation continues.
+The model therefore faces a sharpened stability--plasticity dilemma~\cite{mermillod2013stability}: it needs to avoid catastrophic forgetting of old classes from previously seen domains, absorb new classes, and align feature representations across changing domains simultaneously.
+This forgetting risk arises at two levels: intra-domain forgetting, where decision boundaries fitted to new classes reduce the separability of earlier classes from the same domain; and inter-domain forgetting, where adaptation to a new sensor or location shifts these boundaries away from earlier-domain classes.
+These boundary shifts are amplified by semantic overlap across domains.
+For example, Fig.~\ref{fig:cdcil_setting} shows that the class ``Trees'' appears in both MUUFL and Houston 2013, ``Apple Trees'' appears in Trento, and ``Road'' appears in all three domains.
+The feature space therefore has to support discrimination at two levels: the model has to separate domains with different sensing conditions while distinguishing semantically related classes within and across those domains.
 
-\textbf{A key observation.}
-Through quantitative drift analysis across \emph{six} HSI+LiDAR fusion architectures with varying degrees of branch coupling, we discover an \emph{architecture-dependent drift asymmetry}: in independent-branch architectures, the spatial branches drift up to 5.8$\times$ more than the spectral branch across geographic domains (measured by Linear CKA), whereas this asymmetry largely vanishes in tightly coupled architectures where branches share parameters.
-Concretely, the drift ratio (spatial/spectral) correlates positively with three architectural factors: (1)~branch independence (most critical), (2)~parameter capacity asymmetry between spectral and spatial branches, and (3)~the location of feature extraction relative to coupling layers.
+Current methods addressing catastrophic forgetting can be broadly grouped into five directions: replay-based~\cite{rebuffi2017icarl,hou2019lucir,douillard2020podnet,wang2022foster}, regularization-based~\cite{kirkpatrick2017ewc,li2017lwf}, architecture-based~\cite{wang2022l2p,wang2022dualprompt,smith2023codaprompt,liang2024inflora}, meta-learning-based~\cite{yang2026pmpt,zhu2025pass}, and feature-space-based~\cite{petit2023fetril,mcdonnell2023ranpac,gomezvilla2024ldc}.
+Remote-sensing CIL methods extend these strategies to hyperspectral and multimodal classification scenarios, but are mostly evaluated within a single scene, sensor, or dataset~\cite{deng2024dcprn,xu2025crossacl,zhang2024jfi_acl,li2026dfpem,yang2026pmpt}.
+CDCIL has also attracted attention in other fields, such as medical diagnosis and industrial fault diagnosis, where new categories arrive under changing domains~\cite{yang2023cdfscil,shi2024cdcibn}.
+In remote sensing, the closest existing settings sit one or two axes away from ours: HyperKD~\cite{li2025hyperkd} performs single-modality HSI lifelong learning with each dataset as one coarse task; CDCIRSC~\cite{zhang2024cdcirssc} targets scene-level cross-domain CIL on different data sources; and recent HSI-LiDAR transfer methods~\cite{liu2025prompt} adapt across datasets through joint rather than incremental training.
+Multimodal HSI-LiDAR CDCIL with finer per-domain task granularity therefore exposes representation-level difficulties that remain insufficiently captured by existing settings, especially when class boundaries evolve within each domain while sensor and scene conditions shift across domains.
+This leaves open how to preserve separability between old and new classes within each domain, prevent forgetting across domains, and maintain HSI-LiDAR representations that distinguish semantically similar classes while accounting for domain-specific sensing conditions.
 
-This finding is \emph{not} a universal physical law about spectral stability.
-Rather, it is a \emph{structural prior} specific to independent-branch fusion designs---and one that can be exploited as a principled design signal.
-We therefore explicitly scope our method to \emph{independent-branch multimodal fusion architectures}, where the drift asymmetry is structurally present and exploitable; applying the same strategy to coupled architectures (where asymmetry vanishes) would yield no benefit.
-Instead of uniformly suppressing all drift (as in EWC~\cite{kirkpatrick2017ewc} or LwF~\cite{li2017lwf}), one can design a \emph{non-uniform adaptation strategy} that leverages the naturally stable spectral branch as an anchor and concentrates plasticity on the drifting spatial branches.
+To diagnose these representation-level difficulties, we examine branch-level drift in representative HSI-LiDAR fusion backbones, including FusAtNet~\cite{mohla2020fusatnet}, S2ENet~\cite{fang2022s2enet}, Coupled CNNs~\cite{hang2020coupled}, MAHiDFNet~\cite{li2022mahidfnet}, and HCT~\cite{ghosh2023hct}.
+We find that, across these backbones, the spatial-to-spectral drift ratio ranges from $0.60\times$ for FusAtNet to $5.66\times$ for HCT.
+Coupled fusion architectures such as FusAtNet show weak or no spectral--spatial drift separation, whereas backbones with more explicit spectral--spatial separation, such as HCT, tend to allocate more drift to the spatial branches.
+Motivated by this observation, instead of suppressing branch drift uniformly, we design \backbonename{}, a tri-branch backbone that isolates a capacity-bounded spectral stream as a stable anchor across domains while letting the spatial branches absorb domain-specific variation.
+Within this pool, \backbonename{} attains a spectral drift of $0.081$ and a $7.05\times$ spatial-to-spectral ratio, supporting the intended anchor behavior.
+Building on this anchor, \methodname{} is a lightweight two-layer CDCIL framework that trains the backbone during first-domain warm-up and keeps it frozen; subsequent domains are processed by forward feature extraction, a compact frozen-feature memory, and incremental updates of domain-specific heads.
+The spectral branch routes each sample to a domain-specific head, while the spatial branches contribute drift-suppressed features for fine-grained classification within the routed domain.
 
-We exploit this insight to propose \methodname{} (Cross-Modal Compensated Drift LoRA), a \emph{buffer-free} framework that eliminates the need for a separate exemplar replay buffer by leveraging within-domain training data accessibility---a natural property of fixed-sensor remote sensing deployments---while storing only compact prototypes, adapter weights, and normalization statistics (${\sim}75\times$ less extra storage than replay methods; see Section~\ref{sec:main_results} for the full data access protocol). \methodname{} is built on four ideas:
+The main contributions of this paper are summarized as follows:
 \begin{itemize}
-    \item A \emph{tri-branch Mamba backbone} (\backbonename{}) with a separate spectral stream and Siamese spatial processing, maintaining spectral--spatial independence to preserve the exploitable drift asymmetry.
-    \item \emph{Asymmetric low-rank adaptation}: after warm-up, the spectral branch is frozen as a stable anchor; LoRA adapters are inserted only into the two spatial branches, with rank matched to each branch's effective adaptation dimensionality (LiDAR~$>$~HSI-spatial, validated by rank allocation comparison).
-    \item \emph{SHINE} (per-domain whitening normalization): a post-hoc normalization that eliminates the distributional gap between query features and prototypes across domains.
-    \item \emph{DCR} (drift-compensated reconstruction): a prototype correction mechanism that compensates for the residual drift of old-class prototypes after adapter training.
+    \item We propose \methodname{}, a lightweight two-layer framework specifically tailored to multimodal HSI-LiDAR cross-domain class-incremental learning. It trains the backbone during first-domain warm-up and keeps it frozen; subsequent domains are processed by forward feature extraction, a compact frozen-feature memory, and incremental updates of domain-specific heads. Stable spectral features distinguish domains, whereas drift-suppressed spatial features support fine-grained class discrimination, thereby mitigating intra-domain and inter-domain forgetting under a sharpened stability--plasticity dilemma.
+    \item \methodname{} is built on \backbonename{}, a tri-branch backbone motivated by a branch-level drift analysis across five representative HSI-LiDAR fusion backbones. The analysis suggests two design choices associated with stronger spectral--spatial drift asymmetry---isolating the spectral stream from cross-modal coupling and bounding its capacity---and \backbonename{} instantiates both, providing the low-drift spectral anchor used by \methodname{} for domain routing.
+    \item We conduct comprehensive CDCIL experiments on MUUFL, Trento, and Houston 2013 with $9$ tasks and $32$ classes, covering baseline comparisons, branch-level drift analysis, spectral-routing evaluation, memory-footprint analysis, and ablation studies to verify the roles of the spectral anchor and drift-suppressed spatial features.
 \end{itemize}
-
-Our contributions are threefold:
-\begin{enumerate}
-    \item We reveal an \emph{architecture-dependent drift asymmetry} in cross-domain HSI+LiDAR incremental learning: spatial features drift significantly more than spectral features in independent-branch architectures (HCT: 5.76$\times$, \backbonename{}: 4.98$\times$), while the asymmetry disappears in coupled designs (S2ENet: 1.16$\times$, FusAtNet: 0.38$\times$). We identify this as a \emph{structural prior} of independent-branch architectures and design an asymmetric LoRA framework that exploits it.
-    \item We propose SHINE, a per-domain whitening normalization that aligns feature distributions across geographic domains at inference time, and DCR, a drift-compensated prototype reconstruction that corrects old-class prototypes after spatial adaptation.
-    \item On a 9-task cross-domain benchmark (MUUFL$\to$Trento$\to$Houston\,2013, 32 classes), \methodname{} achieves $84.5\% \pm 0.9$ balanced accuracy \emph{without maintaining a replay buffer}, surpassing all replay-free baselines by over $40$\,pp and outperforming the best replay methods (iCaRL $77.9\%$, FOSTER $77.0\%$ on their original backbones) while requiring ${\sim}75\times$ less extra storage. Comprehensive evaluation across all six domain orderings confirms consistent advantages over replay baselines ($80.9\%$ vs.\ $77.8\%$ and $77.2\%$).
-\end{enumerate}

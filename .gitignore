@@ -79,7 +79,6 @@ REVIEW_STATE.json
 # Legacy experiment code (tracked separately)
 code/
 docs/
-paper/
 *.md
 !CLAUDE.md
 !PAPER_STORY.md
@@ -93,3 +92,33 @@ paper/
 *.pdf
 !README_CN.md
 !assets/
+
+# === Paper: track sources, ignore build artifacts ===
+# Re-enable paper sources (override the global *.tex/*.bib/*.pdf above)
+!paper/**/*.tex
+!paper/**/*.bib
+!paper/**/*.cls
+!paper/**/*.bst
+!paper/figures/**/*.pdf
+!paper/figures/**/*.png
+!paper/figures/**/*.jpg
+
+# LaTeX build artifacts at paper root (keep ignored)
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.log
+paper/*.out
+paper/*.pdf
+paper/*.synctex.gz
+paper/main\ *
+
+# Paper draft/log folders (not source)
+paper/improvement_tmp/
+paper/PAPER_IMPROVEMENT*.md
+paper/PAPER_IMPROVEMENT*.json
+paper/EXPERIMENTS_ROADMAP*.md
+paper/REVIEW_*.md
+paper/REVIEW_*.json
